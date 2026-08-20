@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#8f3b12">
+  <meta name="color-scheme" content="light">
+  <meta name="robots" content="noindex,nofollow">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>儲備幹部備援學習平台</title>
+  <link rel="preconnect" href="https://script.google.com" crossorigin>
+  <link rel="dns-prefetch" href="//script.google.com">
+  <link rel="stylesheet" href="styles.css?v=stage4-2">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="app-header">
+      <div>
+        <p class="eyebrow">鬍鬚張｜教育中心</p>
+        <h1>儲備幹部備援學習平台</h1>
+      </div>
+      <span id="modeBadge" class="status-badge status-badge--checking">檢查連線</span>
+    </header>
+
+    <main class="app-main">
+      <section id="loginView" class="card login-card" aria-labelledby="loginTitle">
+        <div class="card-heading">
+          <p class="step-label">登入</p>
+          <h2 id="loginTitle">員工工號＋密碼登入</h2>
+        </div>
+        <form id="loginForm" novalidate>
+          <label class="field-group">
+            <span>員工工號</span>
+            <input id="employeeId" name="employeeId" type="text" autocomplete="username" placeholder="請輸入工號" required>
+          </label>
+          <label class="field-group">
+            <span>密碼</span>
+            <div class="password-wrap">
+              <input id="password" name="password" type="password" inputmode="numeric" autocomplete="current-password" maxlength="4" placeholder="4 碼數字" required>
+              <button id="togglePassword" class="icon-button" type="button" aria-label="顯示密碼">顯示</button>
+            </div>
+          </label>
+          <div id="loginMessage" class="form-message form-message--error" role="alert" hidden></div>
+          <button id="loginButton" class="primary-button" type="submit">登入</button>
+        </form>
+        <div class="demo-account"><span>測試帳號請向教育中心取得</span></div>
+      </section>
+
+      <section id="dashboardView" class="dashboard" hidden>
+        <article class="card profile-card profile-card--compact">
+          <div class="profile-topline">
+            <div>
+              <p class="step-label">登入中</p>
+              <h2><span id="userName">—</span>，您好</h2>
+              <p class="profile-subline"><span id="userMeta">—</span></p>
+            </div>
+            <div class="profile-actions">
+              <span id="userRole" class="role-badge">—</span>
+              <button id="logoutButton" class="text-button text-button--danger" type="button">登出</button>
+            </div>
+          </div>
+        </article>
+
+        <section id="lessonPage" class="lesson-page" hidden>
+          <div class="lesson-page__top">
+            <button id="backLessonButton" class="secondary-button lesson-back-button" type="button">← 返回課程</button>
+            <div class="lesson-page__heading">
+              <p id="lessonPackageName" class="step-label">—</p>
+              <h2 id="lessonTitle">—</h2>
+            </div>
+          </div>
+          <div id="lessonMeta" class="lesson-meta"></div>
+          <div id="lessonContent" class="lesson-content"></div>
+          <div class="lesson-page__footer">
+            <button id="completeLessonButton" class="primary-button" type="button">完成此子課程</button>
+          </div>
+        </section>
+
+        <section id="studentDashboard" hidden>
+          <nav class="tab-bar" aria-label="學員功能">
+            <button class="tab-button is-active" data-student-tab="courses" type="button">我的課程</button>
+            <button class="tab-button" data-student-tab="records" type="button">學習紀錄</button>
+          </nav>
+
+          <section id="studentCoursesPanel" class="tab-panel">
+            <div id="studentSummary" class="summary-grid"></div>
+            <div class="panel-heading"><div><h2>我的課程</h2></div></div>
+            <div id="packageList" class="package-list"></div>
+          </section>
+
+          <section id="studentRecordsPanel" class="tab-panel" hidden>
+            <div class="panel-heading"><div><h2>學習紀錄</h2></div></div>
+            <div id="studentRecordsList" class="record-list"></div>
+          </section>
+        </section>
+
+        <section id="adminDashboard" hidden>
+          <nav class="tab-bar tab-bar--admin" aria-label="教育中心功能">
+            <button class="tab-button is-active" data-admin-tab="people" type="button">依人員查看</button>
+            <button class="tab-button" data-admin-tab="courses" type="button">依課程查看</button>
+            <button class="tab-button" data-admin-tab="manage" type="button">課程管理</button>
+          </nav>
+
+          <section id="adminTrackingPanel" class="tab-panel">
+            <div id="adminSummary" class="summary-grid"></div>
+            <form id="adminSearchForm" class="search-bar" onsubmit="return false;">
+              <input id="adminSearch" type="search" placeholder="搜尋工號、姓名、店別或課程">
+            </form>
+            <div id="adminPeoplePanel" class="accordion-list"></div>
+            <div id="adminCoursesPanel" class="accordion-list" hidden></div>
+          </section>
+
+          <section id="adminManagePanel" class="tab-panel" hidden>
+            <div class="panel-heading manage-heading">
+              <div><h2>課程管理</h2><p class="package-meta">建立、預覽、發布與指派課程</p></div>
+              <div class="manage-heading__actions">
+                <button id="exportProgressButton" class="secondary-button primary-button--fit" type="button">匯出完成紀錄</button>
+                <button id="newPackageButton" class="primary-button primary-button--fit" type="button">＋ 新增母課程</button>
+              </div>
+            </div>
+            <div id="adminCatalogSummary" class="summary-grid"></div>
+            <div id="adminCatalogList" class="manage-list"></div>
+          </section>
+        </section>
+      </section>
+    </main>
+
+    <footer class="app-footer">
+      <span>教育中心備援學習平台</span>
+      <span>Stage 4.2｜課程閱讀與管理完善</span>
+    </footer>
+  </div>
+
+  <div id="adminEditorOverlay" class="overlay" hidden>
+    <section class="sheet-dialog admin-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="adminEditorTitle">
+      <header class="sheet-header">
+        <div><p class="step-label">教育中心</p><h2 id="adminEditorTitle">課程管理</h2></div>
+        <button id="closeAdminEditorButton" class="close-button" type="button" aria-label="關閉">×</button>
+      </header>
+      <div id="adminEditorBody" class="sheet-content"></div>
+    </section>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="api_config.js"></script>
+  <script src="api_client.js"></script>
+  <script src="app.js?v=stage4-2"></script>
+</body>
+</html>
