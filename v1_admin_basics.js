@@ -5,7 +5,19 @@
   const state={catalog:[],learners:[],token:'',adminBasics:false};
   const UI_STATE_KEY='reserve_cadre_v1_admin_ui';
   const BOOTSTRAP_CACHE_KEY='reserve_cadre_v1_bootstrap_cache';
+  const SESSION_RESET_KEY='reserve_cadre_v1_session_reset_104';
+  const LEGACY_SESSION_KEY='reserve_cadre_stage4_2_session';
+  const V1_SESSION_KEY='learning_backup_v1_session';
   let scheduled=false;
+
+  try {
+    if (sessionStorage.getItem(SESSION_RESET_KEY) !== '1') {
+      sessionStorage.removeItem(LEGACY_SESSION_KEY);
+      sessionStorage.removeItem(V1_SESSION_KEY);
+      sessionStorage.removeItem(BOOTSTRAP_CACHE_KEY);
+      sessionStorage.setItem(SESSION_RESET_KEY, '1');
+    }
+  } catch (e) {}
 
   function saveUiState(extra={}){
     const expanded=[...document.querySelectorAll('[data-manage-body]')].filter(x=>!x.hidden).map(x=>x.dataset.manageBody).filter(Boolean);
@@ -17,13 +29,13 @@
   }
   function restoreUiState(){
     const x=readUiState();if(!x)return;
-    const tab=document.querySelector(`[data-admin-tab=\"${CSS.escape(x.tab||'manage')}\"]`);
+    const tab=document.querySelector(`[data-admin-tab="${CSS.escape(x.tab||'manage')}"]`);
     if(tab&&!tab.classList.contains('is-active'))tab.click();
     let ready=true;
     (x.expanded||[]).forEach(id=>{
-      const body=document.querySelector(`[data-manage-body=\"${CSS.escape(id)}\"]`);
+      const body=document.querySelector(`[data-manage-body="${CSS.escape(id)}"]`);
       if(!body){ready=false;return;}
-      if(body.hidden){body.hidden=false;const b=document.querySelector(`[data-toggle-manage=\"${CSS.escape(id)}\"]`);if(b)b.textContent='收合';}
+      if(body.hidden){body.hidden=false;const b=document.querySelector(`[data-toggle-manage="${CSS.escape(id)}"]`);if(b)b.textContent='收合';}
     });
     if(ready){requestAnimationFrame(()=>window.scrollTo({top:Number(x.scrollY)||0,behavior:'auto'}));sessionStorage.removeItem(UI_STATE_KEY);}
   }
@@ -35,7 +47,7 @@
     if(data.features&&data.features.adminBasics===true)state.adminBasics=true;
     if(data.catalog&&Array.isArray(data.catalog.packages)){
       state.catalog=data.catalog.packages;
-      state.learners=Array.isArray(data.catalog.learners)?data.catalog.learners:[];
+      state.learners=Array.isArray(data.catalog.learnners)?data.catalog.learnners:(Array.isArray(data.catalog.learners)?data.catalog.learners:[]);
     }
   }
 
