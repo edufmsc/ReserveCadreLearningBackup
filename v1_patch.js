@@ -86,12 +86,27 @@
     if(url)setText(url.closest('label')?.querySelector('span'),'影片／PDF／下載檔網址');
   }
 
+  function driveFileId(url){
+    const raw=String(url||'').trim();
+    const patterns=[/\/file\/d\/([\w-]+)/i,/[?&]id=([\w-]+)/i,/\/d\/([\w-]+)/i];
+    for(const pattern of patterns){const m=raw.match(pattern);if(m)return m[1];}
+    return '';
+  }
+  function drivePreviewUrl(url){
+    const id=driveFileId(url);
+    return id?`https://drive.google.com/file/d/${id}/preview?embedded=true`:String(url||'').trim();
+  }
   function patchPdf(){
     document.querySelectorAll('.pdf-content[data-pdf-url]').forEach(block=>{
-      if(!isDrive(block.dataset.pdfUrl)||block.dataset.v1DriveBlocked==='1')return;
-      block.dataset.v1DriveBlocked='1';block.dataset.loaded='1';
+      const url=block.dataset.pdfUrl;
+      if(!isDrive(url)||block.dataset.v1DriveEmbedded==='1')return;
+      block.dataset.v1DriveEmbedded='1';
+      block.dataset.loaded='1';
       const viewer=block.querySelector('.pdf-viewer');
-      if(viewer)viewer.innerHTML='<div class="content-placeholder">正式版 PDF 不使用 Google Drive。請改成可直接讀取的 PDF 網址。</div>';
+      if(viewer){
+        viewer.innerHTML=`<div class="v1-drive-pdf-shell"><iframe class="pdf-frame v1-drive-pdf-frame" src="${esc(drivePreviewUrl(url))}" title="PDF教材" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" allow="fullscreen"></iframe></div>`;
+      }
+      block.querySelectorAll('.content-link').forEach(link=>{if((link.textContent||'').includes('另開 PDF'))link.style.display='none';});
     });
   }
 
@@ -177,7 +192,6 @@
       e.preventDefault();const submit=e.currentTarget.querySelector('button[type="submit"]'),type=document.getElementById('v1DirectType').value,url=document.getElementById('v1DirectUrl').value.trim(),text=document.getElementById('v1DirectText').value;
       if(type!=='TEXT'&&!/^https?:\/\//i.test(url)){showLocalToast('請輸入有效網址');return;}
       if(type==='VIDEO'&&!isYoutube(url)){showLocalToast('請使用有效的 YouTube 網址');return;}
-      if(type==='PDF'&&isDrive(url)){showLocalToast('PDF 不可使用 Google Drive 網址');return;}
       submit.disabled=true;submit.textContent='儲存中…';
       try{window.V1AdminUi?.saveState();await window.LearningApi.request('saveContent',{lessonId:lesson.id,type,title:document.getElementById('v1DirectTitle').value,url,text,sort:Number(document.getElementById('v1DirectSort').value)||1,enabled:true},state.token);location.reload();}catch(err){submit.disabled=false;submit.textContent='儲存';showLocalToast(err.message||'儲存失敗');}
     };
@@ -224,7 +238,7 @@
   function scheduleRun(){if(scheduled)return;scheduled=true;requestAnimationFrame(()=>{scheduled=false;run();});}
 
   const style=document.createElement('style');
-  style.textContent=`[data-add-question],[data-edit-question]{display:none!important}.v1-direct-add{border-color:var(--brand)!important;color:var(--brand)!important;font-weight:700}.v1-direct-row{background:var(--surface-soft)}.v1-direct-note{margin:10px 0;padding:9px 11px;border:1px solid var(--line);border-radius:12px;background:var(--surface-soft);color:var(--muted);font-size:.9rem}.v1-download-card{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px;border:1px solid var(--line);border-radius:16px;background:var(--surface-soft)}.v1-download-card div{display:grid;gap:4px}.v1-download-card span{color:var(--muted);font-size:.9rem}@media(max-width:640px){.v1-download-card{align-items:stretch;flex-direction:column}.v1-download-card .primary-button{width:100%}}`;
+  style.textContent=`[data-add-question],[data-edit-question]{display:none!important}.v1-direct-add{border-color:var(--brand)!important;color:var(--brand)!important;font-weight:700}.v1-direct-row{background:var(--surface-soft)}.v1-direct-note{margin:10px 0;padding:9px 11px;border:1px solid var(--line);border-radius:12px;background:var(--surface-soft);color:var(--muted);font-size:.9rem}.v1-download-card{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px;border:1px solid var(--line);border-radius:16px;background:var(--surface-soft)}.v1-download-card div{display:grid;gap:4px}.v1-download-card span{color:var(--muted);font-size:.9rem}.v1-drive-pdf-shell{width:100%;min-height:70vh;border:0;border-radius:12px;overflow:hidden;background:#fff}.v1-drive-pdf-frame{display:block;width:100%;height:75vh;min-height:620px;border:0;background:#fff}@media(max-width:640px){.v1-download-card{align-items:stretch;flex-direction:column}.v1-download-card .primary-button{width:100%}}`;
   document.head.appendChild(style);
   new MutationObserver(scheduleRun).observe(document.documentElement,{childList:true,subtree:true});
   document.addEventListener('DOMContentLoaded',run);
