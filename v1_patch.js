@@ -57,7 +57,12 @@
     });
     host.querySelectorAll('.tag,.lesson-info small').forEach(x=>{if(x.textContent.includes('FILE'))x.textContent=x.textContent.replace(/FILE/g,'範本檔');});
   }
-  function run(){patchEditor();patchPdf();patchFiles();}
+  function patchNoExamUi(){
+    document.querySelectorAll('.record-grid > div').forEach(x=>{if((x.textContent||'').includes('測驗分數'))x.style.display='none';});
+    document.querySelectorAll('.admin-lesson-meta').forEach(x=>{x.textContent=(x.textContent||'').replace(/｜測驗 [^｜]*｜完成/g,'｜完成');});
+    document.querySelectorAll('.criteria-item').forEach(x=>{if((x.textContent||'').includes('測驗'))x.style.display='none';});
+  }
+  function run(){patchEditor();patchPdf();patchFiles();patchNoExamUi();}
   const style=document.createElement('style');style.textContent=`[data-add-question],[data-edit-question]{display:none!important}.v1-download-card{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px;border:1px solid var(--line);border-radius:16px;background:var(--surface-soft)}.v1-download-card div{display:grid;gap:4px}.v1-download-card span{color:var(--muted);font-size:.9rem}@media(max-width:640px){.v1-download-card{align-items:stretch;flex-direction:column}.v1-download-card .primary-button{width:100%}}`;
   document.head.appendChild(style);
   new MutationObserver(run).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['hidden']});
