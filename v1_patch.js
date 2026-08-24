@@ -168,18 +168,18 @@
 
   function openStandaloneContentEditor(lesson,packageId){
     const overlay=document.getElementById('adminEditorOverlay'),body=document.getElementById('adminEditorBody'),title=document.getElementById('adminEditorTitle');
-    if(!overlay||!body||!title){location.reload();return;}
+    if(!overlay||!body||!title){window.V1AdminUi?.saveState();location.reload();return;}
     setText(title,'新增母課程教材');
     body.innerHTML=`<form id="v1DirectContentForm" class="admin-form"><div class="form-grid"><label class="field-group"><span>教材類型</span><select id="v1DirectType"><option value="VIDEO">YouTube影片</option><option value="PDF">PDF</option><option value="FILE">電子範本／下載檔</option><option value="TEXT">文字</option></select></label><label class="field-group"><span>排序</span><input id="v1DirectSort" type="number" min="1" value="${(lesson.contents||[]).length+1}" required></label><label class="field-group field-group--wide"><span>教材標題</span><input id="v1DirectTitle" type="text" required></label><label class="field-group field-group--wide"><span>影片／PDF／下載檔網址</span><input id="v1DirectUrl" type="url" placeholder="https://..."></label><label class="field-group field-group--wide"><span>文字教材內容</span><textarea id="v1DirectText"></textarea></label></div><div class="form-actions"><button id="v1DirectCancel" class="secondary-button" type="button">取消</button><button class="primary-button" type="submit">儲存</button></div></form>`;
     overlay.hidden=false;document.body.classList.add('is-locked');
-    document.getElementById('v1DirectCancel').onclick=()=>location.reload();
+    document.getElementById('v1DirectCancel').onclick=()=>{overlay.hidden=true;body.innerHTML='';document.body.classList.remove('is-locked');};
     document.getElementById('v1DirectContentForm').onsubmit=async e=>{
       e.preventDefault();const submit=e.currentTarget.querySelector('button[type="submit"]'),type=document.getElementById('v1DirectType').value,url=document.getElementById('v1DirectUrl').value.trim(),text=document.getElementById('v1DirectText').value;
       if(type!=='TEXT'&&!/^https?:\/\//i.test(url)){showLocalToast('請輸入有效網址');return;}
       if(type==='VIDEO'&&!isYoutube(url)){showLocalToast('請使用有效的 YouTube 網址');return;}
       if(type==='PDF'&&isDrive(url)){showLocalToast('PDF 不可使用 Google Drive 網址');return;}
       submit.disabled=true;submit.textContent='儲存中…';
-      try{await window.LearningApi.request('saveContent',{lessonId:lesson.id,type,title:document.getElementById('v1DirectTitle').value,url,text,sort:Number(document.getElementById('v1DirectSort').value)||1,enabled:true},state.token);location.reload();}catch(err){submit.disabled=false;submit.textContent='儲存';showLocalToast(err.message||'儲存失敗');}
+      try{window.V1AdminUi?.saveState();await window.LearningApi.request('saveContent',{lessonId:lesson.id,type,title:document.getElementById('v1DirectTitle').value,url,text,sort:Number(document.getElementById('v1DirectSort').value)||1,enabled:true},state.token);location.reload();}catch(err){submit.disabled=false;submit.textContent='儲存';showLocalToast(err.message||'儲存失敗');}
     };
   }
 
