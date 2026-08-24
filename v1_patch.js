@@ -1,8 +1,11 @@
 (function(){
   'use strict';
   const state={packages:[],catalog:[]};
+  let scheduled=false;
+
   function esc(v){return String(v||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
   function isDrive(url){return /(?:drive|docs)\.google\.com/i.test(String(url||''));}
+  function setTextIfChanged(el,text){if(el&&el.textContent!==text)el.textContent=text;}
   function capture(data){
     if(!data)return;
     if(Array.isArray(data.packages))state.packages=data.packages;
@@ -24,26 +27,28 @@
     return null;
   }
   function patchEditor(){
-    document.querySelectorAll('[data-add-question],[data-edit-question]').forEach(x=>x.style.display='none');
+    document.querySelectorAll('[data-add-question],[data-edit-question]').forEach(x=>{if(x.style.display!=='none')x.style.display='none';});
     const type=document.getElementById('editType');
     if(type){
       [...type.options].filter(o=>o.value==='QUIZ').forEach(o=>o.remove());
       if(![...type.options].some(o=>o.value==='FILE')){const o=document.createElement('option');o.value='FILE';o.textContent='電子範本／下載檔';type.appendChild(o);}
-      const label=type.closest('label');if(label){const span=label.querySelector('span');if(span)span.textContent='教材類型';}
+      const span=type.closest('label')?.querySelector('span');
+      setTextIfChanged(span,'教材類型');
     }
     document.querySelectorAll('#adminEditorBody label').forEach(label=>{
       const t=label.textContent||'';
-      if(t.includes('測驗及格分數')||t.includes('PDF需完成確認'))label.style.display='none';
+      if((t.includes('測驗及格分數')||t.includes('PDF需完成確認'))&&label.style.display!=='none')label.style.display='none';
     });
     const url=document.getElementById('editUrl');
-    if(url){const span=url.closest('label')?.querySelector('span');if(span)span.textContent='影片／PDF／下載檔網址';}
+    if(url){const span=url.closest('label')?.querySelector('span');setTextIfChanged(span,'影片／PDF／下載檔網址');}
   }
   function patchPdf(){
     document.querySelectorAll('.pdf-content[data-pdf-url]').forEach(block=>{
-      if(!isDrive(block.dataset.pdfUrl))return;
+      if(!isDrive(block.dataset.pdfUrl)||block.dataset.v1DriveBlocked==='1')return;
+      block.dataset.v1DriveBlocked='1';
+      block.dataset.loaded='1';
       const viewer=block.querySelector('.pdf-viewer');
       if(viewer)viewer.innerHTML='<div class="content-placeholder">正式版 PDF 不使用 Google Drive。請由教育中心改成可直接讀取的 PDF 網址。</div>';
-      block.dataset.loaded='1';
     });
   }
   function patchFiles(){
@@ -58,13 +63,18 @@
     host.querySelectorAll('.tag,.lesson-info small').forEach(x=>{if(x.textContent.includes('FILE'))x.textContent=x.textContent.replace(/FILE/g,'範本檔');});
   }
   function patchNoExamUi(){
-    document.querySelectorAll('.record-grid > div').forEach(x=>{if((x.textContent||'').includes('測驗分數'))x.style.display='none';});
-    document.querySelectorAll('.admin-lesson-meta').forEach(x=>{x.textContent=(x.textContent||'').replace(/｜測驗 [^｜]*｜完成/g,'｜完成');});
-    document.querySelectorAll('.criteria-item').forEach(x=>{if((x.textContent||'').includes('測驗'))x.style.display='none';});
+    document.querySelectorAll('.record-grid > div').forEach(x=>{if((x.textContent||'').includes('測驗分數')&&x.style.display!=='none')x.style.display='none';});
+    document.querySelectorAll('.admin-lesson-meta').forEach(x=>{const old=x.textContent||'',next=old.replace(/｜測驗 [^｜]*｜完成/g,'｜完成');if(next!==old)x.textContent=next;});
+    document.querySelectorAll('.criteria-item').forEach(x=>{if((x.textContent||'').includes('測驗')&&x.style.display!=='none')x.style.display='none';});
   }
   function run(){patchEditor();patchPdf();patchFiles();patchNoExamUi();}
+  function scheduleRun(){
+    if(scheduled)return;
+    scheduled=true;
+    requestAnimationFrame(()=>{scheduled=false;run();});
+  }
   const style=document.createElement('style');style.textContent=`[data-add-question],[data-edit-question]{display:none!important}.v1-download-card{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px;border:1px solid var(--line);border-radius:16px;background:var(--surface-soft)}.v1-download-card div{display:grid;gap:4px}.v1-download-card span{color:var(--muted);font-size:.9rem}@media(max-width:640px){.v1-download-card{align-items:stretch;flex-direction:column}.v1-download-card .primary-button{width:100%}}`;
   document.head.appendChild(style);
-  new MutationObserver(run).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:['hidden']});
+  new MutationObserver(scheduleRun).observe(document.documentElement,{childList:true,subtree:true});
   document.addEventListener('DOMContentLoaded',run);
 })();
