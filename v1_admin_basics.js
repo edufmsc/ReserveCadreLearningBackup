@@ -4,6 +4,7 @@
   const DIRECT_TITLE='__PACKAGE_DIRECT__';
   const state={catalog:[],learners:[],token:'',adminBasics:false};
   const UI_STATE_KEY='reserve_cadre_v1_admin_ui';
+  const BOOTSTRAP_CACHE_KEY='reserve_cadre_v1_bootstrap_cache';
   let scheduled=false;
 
   function saveUiState(extra={}){
@@ -16,13 +17,13 @@
   }
   function restoreUiState(){
     const x=readUiState();if(!x)return;
-    const tab=document.querySelector(`[data-admin-tab="${CSS.escape(x.tab||'manage')}"]`);
+    const tab=document.querySelector(`[data-admin-tab=\"${CSS.escape(x.tab||'manage')}\"]`);
     if(tab&&!tab.classList.contains('is-active'))tab.click();
     let ready=true;
     (x.expanded||[]).forEach(id=>{
-      const body=document.querySelector(`[data-manage-body="${CSS.escape(id)}"]`);
+      const body=document.querySelector(`[data-manage-body=\"${CSS.escape(id)}\"]`);
       if(!body){ready=false;return;}
-      if(body.hidden){body.hidden=false;const b=document.querySelector(`[data-toggle-manage="${CSS.escape(id)}"]`);if(b)b.textContent='收合';}
+      if(body.hidden){body.hidden=false;const b=document.querySelector(`[data-toggle-manage=\"${CSS.escape(id)}\"]`);if(b)b.textContent='收合';}
     });
     if(ready){requestAnimationFrame(()=>window.scrollTo({top:Number(x.scrollY)||0,behavior:'auto'}));sessionStorage.removeItem(UI_STATE_KEY);}
   }
@@ -49,11 +50,16 @@
           try{
             const data=await original(action,payload,token);
             capture(data,token);
+            if(action==='bootstrap'){try{sessionStorage.setItem(BOOTSTRAP_CACHE_KEY,JSON.stringify({data,ts:Date.now()}));}catch{}}
             return data;
           }catch(err){
             const msg=String(err&&err.message||'');
             const expired=/登入已逾時|請重新登入|SESSION_EXPIRED/i.test(msg);
-            if(action!=='bootstrap'||expired||attempt>=2)throw err;
+            if(action!=='bootstrap'||expired)throw err;
+            if(attempt>=2){
+              try{const cached=JSON.parse(sessionStorage.getItem(BOOTSTRAP_CACHE_KEY)||'null');if(cached&&cached.data&&Date.now()-Number(cached.ts||0)<21600000){capture(cached.data,token);return cached.data;}}catch{}
+              throw err;
+            }
             attempt++;
             await new Promise(r=>setTimeout(r,450*attempt));
           }
