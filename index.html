@@ -7,17 +7,17 @@
   <meta name="color-scheme" content="light">
   <meta name="robots" content="noindex,nofollow">
   <meta name="referrer" content="strict-origin-when-cross-origin">
-  <title>儲備幹部備援學習平台</title>
+  <title>教育中心備援學習平台｜V1.0</title>
   <link rel="preconnect" href="https://script.google.com" crossorigin>
   <link rel="dns-prefetch" href="//script.google.com">
-  <link rel="stylesheet" href="styles.css?v=stage4-2">
+  <link rel="stylesheet" href="styles.css?v=1.0">
 </head>
 <body>
   <div class="app-shell">
     <header class="app-header">
       <div>
         <p class="eyebrow">鬍鬚張｜教育中心</p>
-        <h1>儲備幹部備援學習平台</h1>
+        <h1>教育中心備援學習平台</h1>
       </div>
       <span id="modeBadge" class="status-badge status-badge--checking">檢查連線</span>
     </header>
@@ -43,7 +43,6 @@
           <div id="loginMessage" class="form-message form-message--error" role="alert" hidden></div>
           <button id="loginButton" class="primary-button" type="submit">登入</button>
         </form>
-        <div class="demo-account"><span>測試帳號請向教育中心取得</span></div>
       </section>
 
       <section id="dashboardView" class="dashboard" hidden>
@@ -114,7 +113,7 @@
             <div class="panel-heading manage-heading">
               <div><h2>課程管理</h2><p class="package-meta">建立、預覽、發布與指派課程</p></div>
               <div class="manage-heading__actions">
-                <button id="exportProgressButton" class="secondary-button primary-button--fit" type="button">匯出完成紀錄</button>
+                <button id="exportProgressButton" class="secondary-button primary-button--fit" type="button">匯出訓練紀錄</button>
                 <button id="newPackageButton" class="primary-button primary-button--fit" type="button">＋ 新增母課程</button>
               </div>
             </div>
@@ -127,7 +126,7 @@
 
     <footer class="app-footer">
       <span>教育中心備援學習平台</span>
-      <span>Stage 4.2｜課程閱讀與管理完善</span>
+      <span>系統版本 V1.0｜短期備援使用</span>
     </footer>
   </div>
 
@@ -145,6 +144,7 @@
 
   <script src="api_config.js"></script>
   <script src="api_client.js"></script>
-  <script src="app.js?v=stage4-2"></script>
+  <script src="v1_patch.js?v=1.0"></script>
+  <script src="app.js?v=1.0"></script>
 </body>
 </html>
