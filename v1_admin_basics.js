@@ -3,7 +3,30 @@
 
   const DIRECT_TITLE='__PACKAGE_DIRECT__';
   const state={catalog:[],learners:[],token:'',adminBasics:false};
+  const UI_STATE_KEY='reserve_cadre_v1_admin_ui';
   let scheduled=false;
+
+  function saveUiState(extra={}){
+    const expanded=[...document.querySelectorAll('[data-manage-body]')].filter(x=>!x.hidden).map(x=>x.dataset.manageBody).filter(Boolean);
+    const currentTab=document.querySelector('[data-admin-tab].is-active')?.dataset.adminTab||'manage';
+    sessionStorage.setItem(UI_STATE_KEY,JSON.stringify({tab:currentTab,expanded,scrollY:window.scrollY||0,ts:Date.now(),...extra}));
+  }
+  function readUiState(){
+    try{const x=JSON.parse(sessionStorage.getItem(UI_STATE_KEY)||'null');return x&&Date.now()-Number(x.ts||0)<30000?x:null;}catch{return null;}
+  }
+  function restoreUiState(){
+    const x=readUiState();if(!x)return;
+    const tab=document.querySelector(`[data-admin-tab="${CSS.escape(x.tab||'manage')}"]`);
+    if(tab&&!tab.classList.contains('is-active'))tab.click();
+    let ready=true;
+    (x.expanded||[]).forEach(id=>{
+      const body=document.querySelector(`[data-manage-body="${CSS.escape(id)}"]`);
+      if(!body){ready=false;return;}
+      if(body.hidden){body.hidden=false;const b=document.querySelector(`[data-toggle-manage="${CSS.escape(id)}"]`);if(b)b.textContent='收合';}
+    });
+    if(ready){requestAnimationFrame(()=>window.scrollTo({top:Number(x.scrollY)||0,behavior:'auto'}));sessionStorage.removeItem(UI_STATE_KEY);}
+  }
+  window.V1AdminUi={saveState:saveUiState,restoreState:restoreUiState};
 
   function capture(data,token){
     if(token)state.token=token;
@@ -21,9 +44,20 @@
       configured:window.LearningApi.configured,
       request:async function(action,payload,token){
         if(token)state.token=token;
-        const data=await original(action,payload,token);
-        capture(data,token);
-        return data;
+        let attempt=0;
+        while(true){
+          try{
+            const data=await original(action,payload,token);
+            capture(data,token);
+            return data;
+          }catch(err){
+            const msg=String(err&&err.message||'');
+            const expired=/登入已逾時|請重新登入|SESSION_EXPIRED/i.test(msg);
+            if(action!=='bootstrap'||expired||attempt>=2)throw err;
+            attempt++;
+            await new Promise(r=>setTimeout(r,450*attempt));
+          }
+        }
       }
     });
   }
@@ -35,6 +69,7 @@
   }
 
   async function adminActionReload(action,payload,button){
+    saveUiState();
     const old=button?.textContent||'';
     if(button){button.disabled=true;button.textContent='處理中…';}
     try{
@@ -138,12 +173,21 @@
     });
   }
 
-  function run(){patchManage();patchAssignmentTools();}
+  function run(){patchManage();patchAssignmentTools();restoreUiState();}
   function schedule(){if(scheduled)return;scheduled=true;requestAnimationFrame(()=>{scheduled=false;run();});}
 
   const style=document.createElement('style');
   style.textContent='.v1-content-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.v1-assignment-tools{display:grid;gap:8px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--surface-soft);margin-bottom:12px}.v1-assignment-buttons{display:flex;gap:8px;flex-wrap:wrap}.v1-assignment-tools small{color:var(--muted)}@media(max-width:640px){.v1-content-actions{justify-content:flex-end}}';
   document.head.appendChild(style);
   new MutationObserver(schedule).observe(document.documentElement,{childList:true,subtree:true});
+
+  document.addEventListener('submit',e=>{
+    const f=e.target;
+    if(f&&f.matches&&f.matches('#adminEditForm,#v1DirectContentForm'))saveUiState();
+  },true);
+  document.addEventListener('click',e=>{
+    const b=e.target.closest&&e.target.closest('[data-delete-package],[data-add-lesson],[data-edit-lesson],[data-add-content],[data-edit-content],[data-v1-add-package-content]');
+    if(b)saveUiState();
+  },true);
   document.addEventListener('DOMContentLoaded',run);
 })();
