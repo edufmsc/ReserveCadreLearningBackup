@@ -1,14 +1,19 @@
 (()=>{'use strict';
-const BUNDLE='app.bundle.dat?v=1.1.1';
 (async()=>{
   try{
     if(typeof DecompressionStream!=='function')throw new Error('BROWSER_UNSUPPORTED');
-    const r=await fetch(BUNDLE,{cache:'no-store'});
-    if(!r.ok)throw new Error('BUNDLE_HTTP_'+r.status);
-    const gz=await r.arrayBuffer();
-    const stream=new Blob([gz]).stream().pipeThrough(new DecompressionStream('gzip'));
+    const files=['app.bundle.001','app.bundle.002','app.bundle.003','app.bundle.004'];
+    const parts=await Promise.all(files.map(async f=>{
+      const r=await fetch(`${f}?v=1.1.1`,{cache:'no-store'});
+      if(!r.ok)throw new Error(`${f}_HTTP_${r.status}`);
+      return (await r.text()).trim();
+    }));
+    const bin=atob(parts.join(''));
+    const bytes=new Uint8Array(bin.length);
+    for(let i=0;i<bin.length;i++)bytes[i]=bin.charCodeAt(i);
+    const stream=new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
     const source=await new Response(stream).text();
-    if(!source.includes("V='V1.1.1'"))throw new Error('BUNDLE_VERSION_MISMATCH');
+    if(!source.includes("const VERSION = 'V1.1.1'"))throw new Error('BUNDLE_VERSION_MISMATCH');
     (0,eval)(source);
   }catch(err){
     console.error('V1.1.1 boot failed',err);
