@@ -1,0 +1,55 @@
+name: Temporary live API smoke check
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    if: github.event.head_commit.message == 'test: add temporary live API smoke check'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test live Apps Script API
+        env:
+          API_URL: https://script.google.com/macros/s/AKfycbwd17jSaxmpvmS6dn9wJemT_Yv7rRABA7Iwsu8VdWZVZvoAyZ7xaKFRg-Vp1LccpEUn0Q/exec
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess, tempfile, time
+          url=os.environ['API_URL']
+          cases=[
+            ('health', {'action':'health','payload':{},'sessionToken':''}, True),
+            ('invalid_login', {'action':'login','payload':{'employeeId':'__SMOKE_NO_SUCH_USER__','password':'0000'},'sessionToken':''}, False),
+          ]
+          for name,payload,expect_success in cases:
+            with tempfile.NamedTemporaryFile(delete=False) as f:
+              path=f.name
+            start=time.time()
+            p=subprocess.run([
+              'curl','-sS','-L','--max-time','25','-o',path,'-D','-',
+              '-H','Content-Type: text/plain;charset=UTF-8',
+              '--data-binary',json.dumps(payload,ensure_ascii=False),url
+            ],text=True,capture_output=True)
+            elapsed=time.time()-start
+            body=open(path,'rb').read()
+            text=body.decode('utf-8','replace')
+            print(f'CASE={name} elapsed={elapsed:.3f}s curl_rc={p.returncode} bytes={len(body)}')
+            print('HEADERS_START')
+            print(p.stdout[-3000:])
+            print('HEADERS_END')
+            print('BODY_PREFIX='+repr(text[:300]))
+            if p.returncode != 0:
+              raise SystemExit(f'{name}: curl failed: {p.stderr}')
+            try:
+              data=json.loads(text)
+            except Exception as e:
+              raise SystemExit(f'{name}: NON_JSON: {e}; prefix={text[:120]!r}')
+            if name=='health':
+              assert data.get('success') is True and data.get('data',{}).get('ok') is True, data
+            else:
+              assert data.get('success') is False, data
+              print('INVALID_LOGIN_CODE='+str(data.get('error',{}).get('code')))
+          PY
