@@ -6,6 +6,7 @@
   const SESSION_KEY = 'reserve_learning_v11_session';
   const LEGACY_SESSION_KEYS = ['reserve_cadre_stage4_2_session', 'learning_backup_v1_session'];
   const SYNC_INTERVAL_MS = 60000;
+  const SUBMISSION_CACHE_MS = 120000;
   const VIEW_KEY = 'reserve_learning_v11_view';
   const PDFJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
   const PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -35,7 +36,10 @@
     manageOpenLessons: new Set(),
     selectedSubmissionFiles: [],
     activeSubmission: null,
-    adminSubmissions: { items: [], config: null, rootFolderUrl: '' }
+    submissionCache: new Map(),
+    submissionInflight: new Map(),
+    adminSubmissions: { items: [], config: null, rootFolderUrl: '' },
+    adminSubmissionsLoadedAt: 0
   };
 
   const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, ch => ({
@@ -1331,12 +1335,17 @@
     }
   }
 
-  async function loadAdminSubmissions() {
+  async function loadAdminSubmissions(force = false) {
     const body = $('submissionAdminBody');
+    if (!force && state.adminSubmissionsLoadedAt && Date.now() - state.adminSubmissionsLoadedAt < 30000) {
+      renderAdminSubmissions();
+      return;
+    }
     if (body) body.innerHTML = '<div class="empty-state"><h3>載入作業資料中…</h3></div>';
     try {
       const data = await api('adminSubmissions');
       state.adminSubmissions = data;
+      state.adminSubmissionsLoadedAt = Date.now();
       state.uploadConfig = { ...state.uploadConfig, ...(data.config || {}) };
       renderAdminSubmissions();
     } catch (error) { if (body) body.innerHTML = `<div class="empty-state"><h3>${escapeHtml(error.message || '無法載入')}</h3></div>`; }
@@ -1380,6 +1389,7 @@
     try {
       const data = await api('reviewSubmission', { id, decision, reason });
       state.adminSubmissions = data;
+      state.adminSubmissionsLoadedAt = Date.now();
       state.overviewDirty = true;
       renderAdminSubmissions();
       showToast(data.message || '審核完成');
@@ -1407,9 +1417,43 @@
     } catch (error) { showToast(error.message || '操作失敗'); setButtonBusy(button, false); }
   }
 
-  async function loadStudentSubmission(lessonId) {
+  function cacheStudentSubmission(lessonId, data) {
+    if (!lessonId || !data) return data;
+    state.submissionCache.set(lessonId, { data, savedAt: Date.now() });
+    return data;
+  }
+
+  function cachedStudentSubmission(lessonId) {
+    const entry = state.submissionCache.get(lessonId);
+    if (!entry) return null;
+    if (Date.now() - entry.savedAt > SUBMISSION_CACHE_MS) { state.submissionCache.delete(lessonId); return null; }
+    return entry.data;
+  }
+
+  function requestStudentSubmission(lessonId, force = false) {
+    if (!force) {
+      const cached = cachedStudentSubmission(lessonId);
+      if (cached) return Promise.resolve(cached);
+      const inflight = state.submissionInflight.get(lessonId);
+      if (inflight) return inflight;
+    }
+    const task = api('getSubmission', { lessonId })
+      .then(data => cacheStudentSubmission(lessonId, data))
+      .finally(() => state.submissionInflight.delete(lessonId));
+    state.submissionInflight.set(lessonId, task);
+    return task;
+  }
+
+  async function loadStudentSubmission(lessonId, force = false) {
     try {
-      const data = await api('getSubmission', { lessonId });
+      const cached = !force ? cachedStudentSubmission(lessonId) : null;
+      if (cached && state.activeLessonId === lessonId) {
+        state.activeSubmission = cached;
+        state.uploadConfig = { ...state.uploadConfig, ...(cached.config || {}) };
+        renderStudentSubmission();
+        return;
+      }
+      const data = await requestStudentSubmission(lessonId, force);
       if (state.activeLessonId !== lessonId) return;
       state.activeSubmission = data;
       state.uploadConfig = { ...state.uploadConfig, ...(data.config || {}) };
@@ -1474,7 +1518,7 @@
         const file = files[i];
         button.textContent = `上傳中 ${i + 1}/${files.length}…`;
         const fileBase64Value = await fileBase64(file);
-        state.activeSubmission = await api('uploadSubmissionFile', { lessonId: lesson.id, fileName: file.name, mimeType: file.type || 'application/octet-stream', fileBase64: fileBase64Value }, state.token, { timeout: 60000 });
+        state.activeSubmission = cacheStudentSubmission(lesson.id, await api('uploadSubmissionFile', { lessonId: lesson.id, fileName: file.name, mimeType: file.type || 'application/octet-stream', fileBase64: fileBase64Value }, state.token, { timeout: 60000 }));
       }
       state.selectedSubmissionFiles = [];
       renderStudentSubmission();
@@ -1485,13 +1529,13 @@
   async function removeSubmissionFile(lesson, fileId, button) {
     if (!confirm('確定刪除這個尚未送審的附件？')) return;
     setButtonBusy(button, true);
-    try { state.activeSubmission = await api('removeSubmissionFile', { lessonId: lesson.id, fileId }); renderStudentSubmission(); }
+    try { state.activeSubmission = cacheStudentSubmission(lesson.id, await api('removeSubmissionFile', { lessonId: lesson.id, fileId })); renderStudentSubmission(); }
     catch (error) { setButtonBusy(button, false); showToast(error.message || '刪除失敗'); }
   }
 
   async function submitSubmission(lesson) {
     if (!confirm('送出後附件會鎖定，教育中心審核前不能再修改。\n\n確定送出審核？')) return;
-    try { state.activeSubmission = await api('submitSubmission', { lessonId: lesson.id }); renderStudentSubmission(); showToast('已送出教育中心審核'); }
+    try { state.activeSubmission = cacheStudentSubmission(lesson.id, await api('submitSubmission', { lessonId: lesson.id })); renderStudentSubmission(); showToast('已送出教育中心審核'); }
     catch (error) { showToast(error.message || '送出失敗'); }
   }
 
@@ -1520,7 +1564,7 @@
   async function logout() {
     if (state.activeLessonId) await closeLesson();
     try { if (state.token) await api('logout'); } catch {}
-    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] };
+    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.adminSubmissionsLoadedAt = 0;
     clearSession();
     clearViewState();
     $('dashboardView').hidden = true; $('studentDashboard').hidden = true; $('adminDashboard').hidden = true; $('lessonPage').hidden = true; $('loginView').hidden = false; $('password').value = '';
@@ -1557,9 +1601,10 @@
   async function init() {
     loadFoldState();
     bindStaticEvents();
-    await checkHealth();
+    const healthTask = checkHealth();
     const restored = await restoreSession();
     if (!restored) { if ($('bootView')) $('bootView').hidden = true; $('loginView').hidden = false; $('dashboardView').hidden = true; }
+    healthTask.catch(() => {});
   }
 
   init();
