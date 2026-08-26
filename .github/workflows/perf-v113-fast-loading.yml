@@ -1,0 +1,34 @@
+name: V113 fast loading
+
+on:
+  push:
+    branches: [perf/v113-fast-loading]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply safe frontend performance patch
+        run: node tools/perf-v113.js
+      - name: Verify frontend
+        run: |
+          node --check app.js
+          grep -q "SUBMISSION_CACHE_MS" app.js
+          grep -q "submissionInflight" app.js
+          grep -q "const healthTask = checkHealth();" app.js
+          grep -q "cacheStudentSubmission" app.js
+      - name: Commit result
+        run: |
+          rm tools/perf-v113.js
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.js tools/perf-v113.js
+          git commit -m "perf: reduce repeated frontend waits"
+          git push
