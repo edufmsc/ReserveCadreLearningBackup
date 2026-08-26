@@ -69,3 +69,4 @@ replaceOnce(
 
 fs.writeFileSync(path, s, 'utf8');
 console.log('Patched app.js', Buffer.byteLength(s));
+// trigger workflow after main registration
