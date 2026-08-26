@@ -39,7 +39,11 @@
     submissionCache: new Map(),
     submissionInflight: new Map(),
     adminSubmissions: { items: [], config: null, rootFolderUrl: '' },
-    adminSubmissionsLoadedAt: 0
+    adminSubmissionsLoadedAt: 0,
+    studentPackagesLoaded: false,
+    adminCatalogLoaded: false,
+    studentPackagesLoading: null,
+    adminCatalogLoading: null
   };
 
   const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, ch => ({
@@ -55,7 +59,7 @@
 
   async function api(action, payload = {}, token = state.token, options = {}) {
     if (!configured()) throw new Error('尚未設定 Apps Script /exec 網址。');
-    const retryable = options.retry === true || ['health', 'bootstrap', 'adminOverview'].includes(action);
+    const retryable = options.retry === true || ['health', 'bootstrap', 'adminOverview', 'studentPackages', 'adminCatalog'].includes(action);
     const attempts = retryable ? 3 : 1;
     let lastError;
     for (let attempt = 0; attempt < attempts; attempt++) {
@@ -314,20 +318,72 @@
   }
 
   function captureBootstrap(data) {
-    state.user = data.user || null;
-    state.mode = data.mode || '';
+    state.user = data.user || state.user || null;
+    state.mode = data.mode || state.mode || '';
     state.features = { ...state.features, ...(data.features || {}) };
     state.uploadConfig = { ...state.uploadConfig, ...(data.uploadConfig || {}) };
     if (data.mode === 'admin') {
-      state.adminOverview = Array.isArray(data.overview) ? data.overview : [];
-      state.adminCatalog = data.catalog || { packages: [], learners: [], assignments: [] };
+      const hasOverview = Array.isArray(data.overview);
+      const hasCatalog = !!data.catalog;
+      state.adminOverview = hasOverview ? data.overview : [];
+      state.adminCatalog = hasCatalog ? data.catalog : { packages: [], learners: [], assignments: [] };
+      state.overviewDirty = !hasOverview;
+      state.adminCatalogLoaded = hasCatalog;
       state.packages = [];
-      state.overviewDirty = false;
+      state.studentPackagesLoaded = false;
     } else {
-      state.packages = Array.isArray(data.packages) ? data.packages : [];
+      const hasPackages = Array.isArray(data.packages);
+      state.packages = hasPackages ? data.packages : [];
+      state.studentPackagesLoaded = hasPackages;
       state.adminOverview = [];
       state.adminCatalog = { packages: [], learners: [], assignments: [] };
+      state.overviewDirty = false;
+      state.adminCatalogLoaded = false;
     }
+  }
+
+  async function ensureStudentPackages(force = false) {
+    if (state.user?.roleKey === 'admin') return;
+    if (!force && state.studentPackagesLoaded) return;
+    if (state.studentPackagesLoading) return state.studentPackagesLoading;
+    const task = api('studentPackages', {}, state.token, { retry: true })
+      .then(data => {
+        const packages = Array.isArray(data) ? data : (Array.isArray(data?.packages) ? data.packages : []);
+        state.packages = packages;
+        state.studentPackagesLoaded = true;
+        renderStudent();
+        return packages;
+      })
+      .finally(() => { state.studentPackagesLoading = null; });
+    state.studentPackagesLoading = task;
+    return task;
+  }
+
+  async function ensureAdminCatalog(force = false) {
+    if (state.user?.roleKey !== 'admin') return;
+    if (!force && state.adminCatalogLoaded) return;
+    if (state.adminCatalogLoading) return state.adminCatalogLoading;
+    const task = api('adminCatalog', {}, state.token, { retry: true })
+      .then(data => {
+        const catalog = data?.catalog || data;
+        state.adminCatalog = catalog || { packages: [], learners: [], assignments: [] };
+        state.adminCatalogLoaded = true;
+        if (state.adminTab === 'manage') renderAdminManage();
+        return state.adminCatalog;
+      })
+      .finally(() => { state.adminCatalogLoading = null; });
+    state.adminCatalogLoading = task;
+    return task;
+  }
+
+  function hydrateDashboardData() {
+    if (!state.features.lazyDataV114 || !state.user) return Promise.resolve();
+    if (state.user.roleKey === 'admin') {
+      if (state.adminTab === 'manage') return ensureAdminCatalog();
+      if (state.adminTab === 'submissions') return loadAdminSubmissions();
+      return ensureAdminOverview();
+    }
+    return ensureStudentPackages();
   }
 
   async function login(account, password) {
@@ -338,6 +394,7 @@
     const bootstrap = data.bootstrap || await api('bootstrap', {}, state.token, { retry: true });
     captureBootstrap(bootstrap);
     renderDashboard();
+    hydrateDashboardData().catch(error => showToast(error.message || '資料載入失敗'));
   }
 
   async function restoreSession() {
@@ -349,7 +406,11 @@
       captureBootstrap(data);
       saveSession();
       renderDashboard();
+      if (state.features.lazyDataV114 && state.user?.roleKey !== 'admin') {
+        try { await ensureStudentPackages(); } catch (error) { showToast(error.message || '課程載入失敗'); }
+      }
       await restoreSavedView();
+      hydrateDashboardData().catch(error => showToast(error.message || '資料載入失敗'));
       return true;
     } catch (error) {
       const expired = /SESSION_EXPIRED|SESSION_REQUIRED/.test(error.code || '') || /登入已逾時|請重新登入/.test(error.message || '');
@@ -420,7 +481,7 @@
       <article class="summary-card"><span>課程</span><strong>${state.packages.length}</strong></article>
       <article class="summary-card"><span>必修完成</span><strong>${done}/${total}</strong></article>
       <article class="summary-card"><span>課程完成</span><strong>${complete}/${state.packages.length}</strong></article>`;
-    $('packageList').innerHTML = state.packages.length ? state.packages.map(renderPackageCard).join('') : '<div class="empty-state"><h3>目前沒有指派課程</h3></div>';
+    $('packageList').innerHTML = state.packages.length ? state.packages.map(renderPackageCard).join('') : (state.features.lazyDataV114 && !state.studentPackagesLoaded ? '<div class="empty-state"><h3>正在載入課程…</h3></div>' : '<div class="empty-state"><h3>目前沒有指派課程</h3></div>');
     bindStudentPackageEvents();
     renderStudentRecords();
   }
@@ -1191,7 +1252,7 @@
 
   async function saveAdminAction(action, payload) {
     const data = await api(action, payload);
-    if (data?.catalog) state.adminCatalog = data.catalog;
+    if (data?.catalog) { state.adminCatalog = data.catalog; state.adminCatalogLoaded = true; }
     if (Array.isArray(data?.overview)) { state.adminOverview = data.overview; state.overviewDirty = false; }
     else state.overviewDirty = true;
     if (data?.user) state.user = data.user;
@@ -1547,7 +1608,12 @@
     $('adminPeoplePanel').hidden = tab !== 'people';
     $('adminCoursesPanel').hidden = tab !== 'courses';
     if ($('adminSubmissionPanel')) $('adminSubmissionPanel').hidden = tab !== 'submissions';
-    if (tab === 'manage') renderAdminManage();
+    if (tab === 'manage') {
+      if (state.features.lazyDataV114 && !state.adminCatalogLoaded) {
+        if ($('adminCatalogList')) $('adminCatalogList').innerHTML = '<div class="empty-state"><h3>正在載入課程管理資料…</h3></div>';
+        ensureAdminCatalog().catch(error => showToast(error.message || '課程管理資料載入失敗'));
+      } else renderAdminManage();
+    }
     if (tab === 'submissions') loadAdminSubmissions();
     if (refresh && ['people', 'courses'].includes(tab)) ensureAdminOverview();
     if (persist) saveViewState({ view: 'admin', adminTab: tab, scrollY: 0 });
@@ -1558,13 +1624,16 @@
     $('studentCoursesPanel').hidden = tab !== 'courses';
     $('studentRecordsPanel').hidden = tab !== 'records';
     state.studentTab = tab;
+    if (tab === 'courses' && state.features.lazyDataV114 && !state.studentPackagesLoaded) {
+      ensureStudentPackages().catch(error => showToast(error.message || '課程載入失敗'));
+    }
     if (persist) saveViewState({ view: 'student', studentTab: tab, scrollY: 0 });
   }
 
   async function logout() {
     if (state.activeLessonId) await closeLesson();
     try { if (state.token) await api('logout'); } catch {}
-    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.adminSubmissionsLoadedAt = 0;
+    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null;
     clearSession();
     clearViewState();
     $('dashboardView').hidden = true; $('studentDashboard').hidden = true; $('adminDashboard').hidden = true; $('lessonPage').hidden = true; $('loginView').hidden = false; $('password').value = '';
