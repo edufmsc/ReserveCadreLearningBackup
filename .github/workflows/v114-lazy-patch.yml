@@ -1,0 +1,34 @@
+name: V114 lazy data compatibility
+
+on:
+  push:
+    branches: [perf/v114-lazy-data-ready]
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply V1.1.4 lazy data compatibility patch
+        run: node tools/patch-v114-lazy.js
+      - name: Verify frontend
+        run: |
+          node --check app.js
+          grep -q "ensureStudentPackages" app.js
+          grep -q "ensureAdminCatalog" app.js
+          grep -q "lazyDataV114" app.js
+          grep -q "studentPackagesLoaded" app.js
+      - name: Commit result
+        run: |
+          rm tools/patch-v114-lazy.js
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add app.js tools/patch-v114-lazy.js
+          git commit -m "perf: prepare frontend for lazy backend data"
+          git push
