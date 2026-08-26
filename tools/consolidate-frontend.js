@@ -43,7 +43,17 @@ vm.runInThisContext(appSource, { filename: 'app.js' });
   const v113 = capturedStyles.find(x => x.id === 'v113-release-style');
   if (!v113 || !v113.css) throw new Error('V113_CSS_NOT_CAPTURED');
 
-  const finalSource = String(global.__FINAL_SOURCE__).trimEnd() + '\n';
+  let finalSource = String(global.__FINAL_SOURCE__).trimEnd() + '\n';
+
+  // V1.1.3 used a string patch for date normalization. When flattened into source,
+  // one escaping layer disappears and leaves an invalid /\/g literal. Repair it
+  // to the intended regex that replaces backslashes with hyphens.
+  const brokenDateRegex = "replace(/\\/g, '-')";
+  const fixedDateRegex = "replace(/\\\\/g, '-')";
+  const brokenCount = finalSource.split(brokenDateRegex).length - 1;
+  if (brokenCount !== 1) throw new Error('DATE_REGEX_REPAIR_POINT_' + brokenCount);
+  finalSource = finalSource.replace(brokenDateRegex, fixedDateRegex);
+
   const required = [
     "const VERSION = 'V1.1.3';",
     'applicabilityMode',
