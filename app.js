@@ -1573,11 +1573,24 @@
     if (!files.length) return;
     button.disabled = true;
     try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        button.textContent = `上傳中 ${i + 1}/${files.length}…`;
-        const fileBase64Value = await fileBase64(file);
-        state.activeSubmission = cacheStudentSubmission(lesson.id, await api('uploadSubmissionFile', { lessonId: lesson.id, fileName: file.name, mimeType: file.type || 'application/octet-stream', fileBase64: fileBase64Value }, state.token, { timeout: 60000 }));
+      const totalBytes = files.reduce((sum, file) => sum + n(file.size), 0);
+      const canBatch = !!state.features.batchUploadV114 && files.length > 1 && totalBytes <= 6 * 1024 * 1024;
+      if (canBatch) {
+        button.textContent = `整理 ${files.length} 個檔案…`;
+        const encoded = await Promise.all(files.map(async file => ({
+          fileName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          fileBase64: await fileBase64(file)
+        })));
+        button.textContent = `一次上傳 ${files.length} 個檔案…`;
+        state.activeSubmission = cacheStudentSubmission(lesson.id, await api('uploadSubmissionFilesBatch', { lessonId: lesson.id, files: encoded }, state.token, { timeout: 120000 }));
+      } else {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          button.textContent = `上傳中 ${i + 1}/${files.length}…`;
+          const fileBase64Value = await fileBase64(file);
+          state.activeSubmission = cacheStudentSubmission(lesson.id, await api('uploadSubmissionFile', { lessonId: lesson.id, fileName: file.name, mimeType: file.type || 'application/octet-stream', fileBase64: fileBase64Value }, state.token, { timeout: 60000 }));
+        }
       }
       state.selectedSubmissionFiles = [];
       renderStudentSubmission();
