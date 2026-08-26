@@ -2,7 +2,7 @@
   'use strict';
 
   const $ = id => document.getElementById(id);
-  const VERSION = 'V1.1.3';
+  const VERSION = 'V1.1.4';
   const SESSION_KEY = 'reserve_learning_v11_session';
   const LEGACY_SESSION_KEYS = ['reserve_cadre_stage4_2_session', 'learning_backup_v1_session'];
   const SYNC_INTERVAL_MS = 60000;
@@ -16,7 +16,7 @@
     user: null,
     mode: '',
     features: {},
-    uploadConfig: { enabled: false, maxMb: 20, maxFilesPerBatch: 5, maxFilesPerSubmission: 20, allowedExtensions: [] },
+    uploadConfig: { enabled: false, maxMb: 20, maxFilesPerBatch: 10, maxFilesPerSubmission: 20, allowedExtensions: [] },
     packages: [],
     adminOverview: [],
     adminCatalog: { packages: [], learners: [], assignments: [] },
@@ -719,11 +719,9 @@
     if (!host) return;
     host.oncontextmenu = event => event.preventDefault();
     try {
-      if (isDriveUrl(pdfUrl) && googleFileId(pdfUrl)) {
-        host.classList.add('pdf-drive-shell');
-        host.innerHTML = `<iframe class="pdf-drive-frame" src="${escapeHtml(drivePreviewUrl(pdfUrl))}" title="PDF 教材" loading="lazy" referrerpolicy="no-referrer"></iframe>`;
-        return;
-      }
+      // V1.1.4: 所有 PDF 都走自有 PDF.js 閱讀器，不再嵌入 Google Drive 預覽器。
+      // 這樣可移除 Drive 自帶的「彈出式視窗」控制項，且手機/電腦閱讀介面一致。
+      host.classList.remove('pdf-drive-shell');
       let data = state.pdfCache.get(contentId);
       if (!data) {
         data = await api('getPdfContent', { contentId }, state.token, { timeout: 60000 });
@@ -1575,11 +1573,24 @@
     if (!files.length) return;
     button.disabled = true;
     try {
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        button.textContent = `上傳中 ${i + 1}/${files.length}…`;
-        const fileBase64Value = await fileBase64(file);
-        state.activeSubmission = cacheStudentSubmission(lesson.id, await api('uploadSubmissionFile', { lessonId: lesson.id, fileName: file.name, mimeType: file.type || 'application/octet-stream', fileBase64: fileBase64Value }, state.token, { timeout: 60000 }));
+      const totalBytes = files.reduce((sum, file) => sum + n(file.size), 0);
+      const canBatch = !!state.features.batchUploadV114 && files.length > 1 && totalBytes <= 6 * 1024 * 1024;
+      if (canBatch) {
+        button.textContent = `整理 ${files.length} 個檔案…`;
+        const encoded = await Promise.all(files.map(async file => ({
+          fileName: file.name,
+          mimeType: file.type || 'application/octet-stream',
+          fileBase64: await fileBase64(file)
+        })));
+        button.textContent = `一次上傳 ${files.length} 個檔案…`;
+        state.activeSubmission = cacheStudentSubmission(lesson.id, await api('uploadSubmissionFilesBatch', { lessonId: lesson.id, files: encoded }, state.token, { timeout: 120000 }));
+      } else {
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+          button.textContent = `上傳中 ${i + 1}/${files.length}…`;
+          const fileBase64Value = await fileBase64(file);
+          state.activeSubmission = cacheStudentSubmission(lesson.id, await api('uploadSubmissionFile', { lessonId: lesson.id, fileName: file.name, mimeType: file.type || 'application/octet-stream', fileBase64: fileBase64Value }, state.token, { timeout: 60000 }));
+        }
       }
       state.selectedSubmissionFiles = [];
       renderStudentSubmission();
@@ -1630,13 +1641,17 @@
     if (persist) saveViewState({ view: 'student', studentTab: tab, scrollY: 0 });
   }
 
-  async function logout() {
-    if (state.activeLessonId) await closeLesson();
-    try { if (state.token) await api('logout'); } catch {}
-    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null;
+  function logout() {
+    // V1.1.4: 使用者按下登出後立即切回登入頁；伺服器 session 清除改為背景執行。
+    const token = state.token;
+    if (state.activeLessonId && !state.previewMode && state.tracker?.dirty) flushProgress(false).catch(() => {});
+    stopTracker();
+    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null; state.activePackageId = ''; state.activeLessonId = ''; state.previewMode = false; state.activeSubmission = null;
     clearSession();
     clearViewState();
     $('dashboardView').hidden = true; $('studentDashboard').hidden = true; $('adminDashboard').hidden = true; $('lessonPage').hidden = true; $('loginView').hidden = false; $('password').value = '';
+    window.scrollTo({ top: 0, behavior: 'auto' });
+    if (token) api('logout', {}, token, { timeout: 10000 }).catch(() => {});
   }
 
   function bindStaticEvents() {
