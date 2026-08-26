@@ -1,0 +1,32 @@
+name: Verify learning platform
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax check
+        run: node --check app.js
+      - name: Structural checks
+        run: |
+          test -f index.html
+          test -f styles.css
+          test -f app.js
+          test -f api_config.js
+          grep -q "const VERSION = 'V1.1.6'" app.js
+          grep -q "NON_JSON_RESPONSE" app.js
+          grep -q "submissionDeleteChains" app.js
+          grep -q "pdfPageObservers" app.js
+          grep -q "contentFileUploadV116" app.js
+          grep -q "V1.1.6" index.html
+          test ! -e app.v112.loader.js
+          test ! -e app.bundle.001
