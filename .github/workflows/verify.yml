@@ -15,13 +15,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Syntax check
-        run: node --check app.js
+        run: |
+          node --check app.js
+          node --check tools/verify-contract.js
       - name: Structural checks
         run: |
           test -f index.html
           test -f styles.css
           test -f app.js
           test -f api_config.js
+          test -f apps-script/contract.json
+          test -f tools/verify-contract.js
           grep -q "const VERSION = 'V1.1.6'" app.js
           grep -q "NON_JSON_RESPONSE" app.js
           grep -q "submissionDeleteChains" app.js
@@ -30,3 +34,5 @@ jobs:
           grep -q "V1.1.6" index.html
           test ! -e app.v112.loader.js
           test ! -e app.bundle.001
+      - name: Frontend backend contract
+        run: node tools/verify-contract.js
