@@ -2,7 +2,7 @@
   'use strict';
 
   const $ = id => document.getElementById(id);
-  const VERSION = 'V1.1.4';
+  const VERSION = 'V1.1.6';
   const SESSION_KEY = 'reserve_learning_v11_session';
   const LEGACY_SESSION_KEYS = ['reserve_cadre_stage4_2_session', 'learning_backup_v1_session'];
   const SYNC_INTERVAL_MS = 60000;
@@ -29,6 +29,7 @@
     youtubeApiPromise: null,
     pdfJsPromise: null,
     pdfCache: new Map(),
+    pdfPageObservers: new Set(),
     mediaObserver: null,
     adminTab: 'people',
     studentTab: 'courses',
@@ -44,7 +45,9 @@
     adminCatalogLoaded: false,
     studentPackagesLoading: null,
     adminCatalogLoading: null,
-    submissionDeleteChains: new Map()
+    submissionDeleteChains: new Map(),
+    apiConnected: false,
+    selectedAdminContentFile: null
   };
 
   const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, ch => ({
@@ -82,6 +85,8 @@
         }
         if (!response.ok) { const err = new Error(result?.error?.message || '後端連線失敗。'); err.code = result?.error?.code || 'HTTP_ERROR'; err.retryable = response.status >= 500; throw err; }
         if (!result || result.success !== true) { const err = new Error(result?.error?.message || '後端處理失敗。'); err.code = result?.error?.code || 'SERVER_ERROR'; err.retryable = false; throw err; }
+        state.apiConnected = true;
+        if (action !== 'health') setModeBadge('online', '後端正常');
         return result.data;
       } catch (error) {
         lastError = error;
@@ -310,12 +315,12 @@
     try {
       const data = await api('health', {}, '', { retry: false, timeout: 6000 });
       const backendVersion = clean(data?.version);
-      if (data?.ok && backendVersion && backendVersion !== VERSION) setModeBadge('checking', `後端 ${backendVersion}｜待更新`);
-      else setModeBadge(data?.ok ? 'online' : 'offline', data?.ok ? '後端正常' : '資料異常');
+      if (data?.ok) { state.apiConnected = true; setModeBadge('online', backendVersion ? `後端正常｜${backendVersion}` : '後端正常'); }
+      else setModeBadge('offline', '資料異常');
       if (data?.features) state.features = { ...state.features, ...data.features };
       return !!data?.ok;
     } catch {
-      setModeBadge('offline', '連線異常');
+      setModeBadge(state.apiConnected ? 'online' : 'offline', state.apiConnected ? '後端正常' : '連線異常');
       return false;
     }
   }
@@ -349,7 +354,7 @@
     if (state.user?.roleKey === 'admin') return;
     if (!force && state.studentPackagesLoaded) return;
     if (state.studentPackagesLoading) return state.studentPackagesLoading;
-    const task = api('studentPackages', {}, state.token, { retry: true })
+    const task = api('studentPackages', {}, state.token, { retry: false, timeout: 8000 })
       .then(data => {
         const packages = Array.isArray(data) ? data : (Array.isArray(data?.packages) ? data.packages : []);
         state.packages = packages;
@@ -366,7 +371,7 @@
     if (state.user?.roleKey !== 'admin') return;
     if (!force && state.adminCatalogLoaded) return;
     if (state.adminCatalogLoading) return state.adminCatalogLoading;
-    const task = api('adminCatalog', {}, state.token, { retry: true })
+    const task = api('adminCatalog', {}, state.token, { retry: false, timeout: 8000 })
       .then(data => {
         const catalog = data?.catalog || data;
         state.adminCatalog = catalog || { packages: [], learners: [], assignments: [] };
@@ -416,12 +421,10 @@
       hydrateDashboardData().catch(error => showToast(error.message || '資料載入失敗'));
       return true;
     } catch (error) {
-      const expired = /SESSION_EXPIRED|SESSION_REQUIRED/.test(error.code || '') || /登入已逾時|請重新登入/.test(error.message || '');
-      if (expired) {
-        state.token = '';
-        clearSession();
-        clearViewState();
-      }
+      // 恢復失敗就清掉本機舊 session，避免每次重新整理都再次卡在 bootstrap。
+      state.token = '';
+      clearSession();
+      clearViewState();
       return false;
     }
   }
@@ -735,30 +738,42 @@
       host.innerHTML = '<div class="pdf-canvas-stack"></div>';
       const stack = host.firstElementChild;
       const available = Math.max(280, host.clientWidth - 28);
+      const pixelRatio = Math.min(window.innerWidth <= 760 ? 1.15 : 1.4, Math.max(1, window.devicePixelRatio || 1));
+      const renderPage = async wrap => {
+        if (wrap.dataset.rendered === '1' || wrap.dataset.rendering === '1') return;
+        wrap.dataset.rendering = '1';
+        try {
+          const pageNo = Number(wrap.dataset.pageNo);
+          const page = await pdf.getPage(pageNo);
+          const baseViewport = page.getViewport({ scale: 1 });
+          const cssScale = Math.min(2, available / baseViewport.width);
+          const renderViewport = page.getViewport({ scale: cssScale * pixelRatio });
+          const canvas = wrap.querySelector('canvas');
+          canvas.width = Math.max(1, Math.floor(renderViewport.width));
+          canvas.height = Math.max(1, Math.floor(renderViewport.height));
+          await page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport: renderViewport }).promise;
+          wrap.dataset.rendered = '1';
+        } finally { wrap.dataset.rendering = '0'; }
+      };
+      const observer = new IntersectionObserver(entries => entries.forEach(entry => {
+        if (entry.isIntersecting) renderPage(entry.target).catch(() => {});
+      }), { root: host, rootMargin: '900px 0px', threshold: 0.01 });
+      state.pdfPageObservers.add(observer);
       for (let pageNo = 1; pageNo <= pdf.numPages; pageNo++) {
         const page = await pdf.getPage(pageNo);
         const baseViewport = page.getViewport({ scale: 1 });
         const cssScale = Math.min(2, available / baseViewport.width);
-        const pixelRatio = Math.min(window.innerWidth <= 760 ? 1.25 : 1.6, Math.max(1, window.devicePixelRatio || 1));
-        const renderViewport = page.getViewport({ scale: cssScale * pixelRatio });
         const cssWidth = Math.max(1, Math.floor(baseViewport.width * cssScale));
         const cssHeight = Math.max(1, Math.floor(baseViewport.height * cssScale));
         const wrap = document.createElement('div');
-        wrap.className = 'pdf-page-wrap';
-        const label = document.createElement('div');
-        label.className = 'pdf-page-label';
-        label.textContent = `第 ${pageNo} / ${pdf.numPages} 頁`;
-        const canvas = document.createElement('canvas');
-        canvas.className = 'pdf-page-canvas';
-        canvas.width = Math.floor(renderViewport.width);
-        canvas.height = Math.floor(renderViewport.height);
-        canvas.style.width = `${cssWidth}px`;
-        canvas.style.height = `${cssHeight}px`;
+        wrap.className = 'pdf-page-wrap'; wrap.dataset.pageNo = String(pageNo);
+        const label = document.createElement('div'); label.className = 'pdf-page-label'; label.textContent = `第 ${pageNo} / ${pdf.numPages} 頁`;
+        const canvas = document.createElement('canvas'); canvas.className = 'pdf-page-canvas';
+        canvas.style.width = `${cssWidth}px`; canvas.style.height = `${cssHeight}px`;
         canvas.addEventListener('contextmenu', event => event.preventDefault());
-        wrap.append(label, canvas);
-        stack.appendChild(wrap);
-        await page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport: renderViewport }).promise;
+        wrap.append(label, canvas); stack.appendChild(wrap); observer.observe(wrap);
       }
+      const first = stack.querySelector('.pdf-page-wrap'); if (first) renderPage(first).catch(() => {});
     } catch (error) {
       block.dataset.loaded = '0';
       host.innerHTML = `<div class="content-placeholder">PDF 載入失敗：${escapeHtml(error.message || '請確認檔案權限')}</div>`;
@@ -784,6 +799,8 @@
     state.youtubePlayers.clear();
     if (state.mediaObserver) state.mediaObserver.disconnect();
     state.mediaObserver = null;
+    state.pdfPageObservers.forEach(observer => { try { observer.disconnect(); } catch {} });
+    state.pdfPageObservers.clear();
   }
 
   function ensureContentProgress(id, type) {
@@ -968,7 +985,7 @@
     const panel = state.adminTab === 'courses' ? $('adminCoursesPanel') : $('adminPeoplePanel');
     if (panel) panel.innerHTML = '<div class="empty-state"><h3>更新學習紀錄中…</h3></div>';
     try {
-      const data = await api('adminOverview', {}, state.token, { retry: true });
+      const data = await api('adminOverview', {}, state.token, { retry: false, timeout: 8000 });
       state.adminOverview = Array.isArray(data.overview) ? data.overview : [];
       state.overviewDirty = false;
       renderAdmin();
@@ -1144,6 +1161,7 @@
   function closeAdminEditor() {
     $('adminEditorOverlay').hidden = true;
     $('adminEditorBody').innerHTML = '';
+    state.selectedAdminContentFile = null;
     document.body.classList.remove('is-locked');
   }
 
@@ -1189,10 +1207,27 @@
     openContentEditor(null, direct?.id || '', pkg.id);
   }
 
+  function contentUploadEditorHtml() {
+    if (!state.features.contentFileUploadV116) return '<div class="manage-warning">直接上傳教材需部署 V1.1.6 後端；目前仍可貼 Google Drive / 網址。</div>';
+    const maxMb = n(state.uploadConfig.maxMb || 20);
+    return `<label id="editContentFileGroup" class="field-group field-group--wide"><span>或直接上傳檔案</span><input id="editContentFile" type="file"><small>PDF 或下載檔可直接選檔；單檔最多 ${maxMb} MB。母課程與子課程使用同一套流程。</small></label>`;
+  }
+
   function openContentEditor(content, lessonId = '', directPackageId = '') {
+    state.selectedAdminContentFile = null;
     content = content || { lessonId, type: 'VIDEO', title: '', url: '', text: '', sort: (findCatalogLesson(lessonId)?.contents || []).length + 1, enabled: true };
-    showAdminEditor(content.id ? '編輯教材' : '新增教材', `<form id="adminEditForm" class="admin-form" data-admin-form="content"><input type="hidden" id="editId" value="${escapeHtml(content.id || '')}"><input type="hidden" id="editLessonId" value="${escapeHtml(content.lessonId || lessonId || '')}"><input type="hidden" id="editDirectPackageId" value="${escapeHtml(directPackageId || '')}"><div class="form-grid"><label class="field-group"><span>教材類型</span><select id="editType"><option value="VIDEO" ${content.type === 'VIDEO' ? 'selected' : ''}>YouTube影片</option><option value="PDF" ${content.type === 'PDF' ? 'selected' : ''}>PDF（網站內閱讀）</option><option value="FILE" ${content.type === 'FILE' ? 'selected' : ''}>電子範本／下載檔</option><option value="TEXT" ${content.type === 'TEXT' ? 'selected' : ''}>文字</option></select></label>${field('排序', 'editSort', content.sort || 1, 'number', 'min="1" required')}${field('教材標題', 'editTitle', content.title, 'text', 'required')}<label class="field-group"><span>啟用</span><select id="editEnabled">${yesNoSelect(content.enabled)}</select></label><label class="field-group field-group--wide"><span>影片／PDF／下載檔網址</span><input id="editUrl" type="url" value="${escapeHtml(content.url || '')}" placeholder="https://..."></label><label class="field-group field-group--wide"><span>文字教材內容</span><textarea id="editText">${escapeHtml(content.text || '')}</textarea></label></div><p class="form-hint">PDF 可使用 Google Drive 分享連結，學員會直接在網站內閱讀，不另開視窗。</p><div class="form-actions"><button id="testContentLinkButton" class="secondary-button" type="button">測試連結</button><button class="secondary-button" type="button" data-cancel-editor>取消</button><button class="primary-button" type="submit">儲存</button></div></form>`);
+    showAdminEditor(content.id ? '編輯教材' : '新增教材', `<form id="adminEditForm" class="admin-form" data-admin-form="content"><input type="hidden" id="editId" value="${escapeHtml(content.id || '')}"><input type="hidden" id="editLessonId" value="${escapeHtml(content.lessonId || lessonId || '')}"><input type="hidden" id="editDirectPackageId" value="${escapeHtml(directPackageId || '')}"><div class="form-grid"><label class="field-group"><span>教材類型</span><select id="editType"><option value="VIDEO" ${content.type === 'VIDEO' ? 'selected' : ''}>YouTube影片</option><option value="PDF" ${content.type === 'PDF' ? 'selected' : ''}>PDF（網站內閱讀）</option><option value="FILE" ${content.type === 'FILE' ? 'selected' : ''}>電子範本／下載檔</option><option value="TEXT" ${content.type === 'TEXT' ? 'selected' : ''}>文字</option></select></label>${field('排序', 'editSort', content.sort || 1, 'number', 'min="1" required')}${field('教材標題', 'editTitle', content.title, 'text', 'required')}<label class="field-group"><span>啟用</span><select id="editEnabled">${yesNoSelect(content.enabled)}</select></label><label class="field-group field-group--wide"><span>影片／PDF／下載檔網址</span><input id="editUrl" type="url" value="${escapeHtml(content.url || '')}" placeholder="https://..."></label><label class="field-group field-group--wide"><span>文字教材內容</span><textarea id="editText">${escapeHtml(content.text || '')}</textarea></label>${contentUploadEditorHtml()}</div><p class="form-hint">PDF／下載檔可貼網址或直接上傳檔案；母課程與子課程操作一致。</p><div class="form-actions"><button id="testContentLinkButton" class="secondary-button" type="button">測試連結</button><button class="secondary-button" type="button" data-cancel-editor>取消</button><button class="primary-button" type="submit">儲存</button></div></form>`);
     bindEditorForm();
+    const fileInput = $('editContentFile'), fileGroup = $('editContentFileGroup'), typeInput = $('editType');
+    const refreshFileInput = () => { if (fileGroup) fileGroup.hidden = !['PDF','FILE'].includes(typeInput?.value || ''); };
+    if (typeInput) { typeInput.addEventListener('change', refreshFileInput); refreshFileInput(); }
+    if (fileInput) fileInput.onchange = () => {
+      const file = fileInput.files?.[0] || null; state.selectedAdminContentFile = file;
+      if (!file) return;
+      const maxBytes = n(state.uploadConfig.maxMb || 20) * 1024 * 1024;
+      if (file.size > maxBytes) { state.selectedAdminContentFile = null; fileInput.value=''; showToast(`檔案不可超過 ${state.uploadConfig.maxMb || 20} MB`); return; }
+      if (typeInput?.value === 'PDF' && !/\.pdf$/i.test(file.name)) { state.selectedAdminContentFile = null; fileInput.value=''; showToast('PDF 教材請選擇 .pdf 檔案'); }
+    };
     $('testContentLinkButton').onclick = () => {
       const type = $('editType').value, url = clean($('editUrl').value);
       if (type === 'TEXT') { showToast('文字教材不需要連結'); return; }
@@ -1252,7 +1287,7 @@
   function optionalNumber(id) { const value = clean($(id)?.value); return value === '' ? null : Number(value); }
 
   async function saveAdminAction(action, payload) {
-    const data = await api(action, payload);
+    const data = await api(action, payload, state.token, { timeout: action === 'saveContent' && payload?.fileBase64 ? 90000 : 15000 });
     if (data?.catalog) { state.adminCatalog = data.catalog; state.adminCatalogLoaded = true; }
     if (Array.isArray(data?.overview)) { state.adminOverview = data.overview; state.overviewDirty = false; }
     else state.overviewDirty = true;
@@ -1279,6 +1314,12 @@
       } else if (kind === 'content') {
         action = 'saveContent';
         payload = { id: $('editId').value, lessonId: $('editLessonId').value, packageId: $('editDirectPackageId').value, type: $('editType').value, title: $('editTitle').value, url: $('editUrl').value, text: $('editText').value, sort: Number($('editSort').value), enabled: boolValue('editEnabled') };
+        const adminFile = state.selectedAdminContentFile;
+        if (adminFile) {
+          if (!state.features.contentFileUploadV116) throw new Error('後端尚未啟用教材直接上傳');
+          button.textContent = '上傳並儲存中…';
+          payload.fileName = adminFile.name; payload.mimeType = adminFile.type || 'application/octet-stream'; payload.fileBase64 = await fileBase64(adminFile);
+        }
         const lesson = findCatalogLesson(payload.lessonId);
         if (lesson) { state.manageOpenPackages.add(lesson.packageId); state.manageOpenLessons.add(lesson.id); }
         if (payload.packageId) state.manageOpenPackages.add(payload.packageId);
@@ -1657,7 +1698,7 @@
     const token = state.token;
     if (state.activeLessonId && !state.previewMode && state.tracker?.dirty) flushProgress(false).catch(() => {});
     stopTracker();
-    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.submissionDeleteChains.clear(); state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null; state.activePackageId = ''; state.activeLessonId = ''; state.previewMode = false; state.activeSubmission = null;
+    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.submissionDeleteChains.clear(); state.selectedAdminContentFile = null; state.apiConnected = false; state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null; state.activePackageId = ''; state.activeLessonId = ''; state.previewMode = false; state.activeSubmission = null;
     clearSession();
     clearViewState();
     $('dashboardView').hidden = true; $('studentDashboard').hidden = true; $('adminDashboard').hidden = true; $('lessonPage').hidden = true; $('loginView').hidden = false; $('password').value = '';
