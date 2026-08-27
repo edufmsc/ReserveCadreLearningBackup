@@ -1398,7 +1398,8 @@
   function optionalNumber(id) { const value = clean($(id)?.value); return value === '' ? null : Number(value); }
 
   async function saveAdminAction(action, payload) {
-    const data = await api(action, payload, state.token, { timeout: action === 'saveContent' && payload?.fileBase64 ? 90000 : 15000 });
+    const timeout = action === 'saveContent' && payload?.fileBase64 ? 90000 : action === 'moveContentsToLesson' ? 90000 : 15000;
+    const data = await api(action, payload, state.token, { timeout });
     if (data?.catalog) { state.adminCatalog = data.catalog; state.adminCatalogLoaded = true; }
     if (Array.isArray(data?.overview)) { state.adminOverview = data.overview; state.overviewDirty = false; }
     else state.overviewDirty = true;
