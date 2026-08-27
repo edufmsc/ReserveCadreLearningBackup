@@ -11,14 +11,14 @@ permissions:
 
 jobs:
   verify:
-    if: github.event_name == 'pull_request' || github.event.head_commit.message == 'ci: push verified final3 app files'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Apply staged FINAL3 patch
+      - name: Apply FINAL3 once when needed
         run: |
-          python3 tools/patch-v116-direct-submission-final.py
-          python3 - <<'PY'
+          if ! grep -q "packageDirectSubmissionV116" app.js; then
+            python3 tools/patch-v116-direct-submission-final.py
+            python3 - <<'PY'
           import json
           p='apps-script/contract.json'
           data=json.load(open(p,encoding='utf-8'))
@@ -29,6 +29,7 @@ jobs:
           s=open(p,encoding='utf-8').read().replace('V116-FINAL2-20260827','V116-FINAL3-20260827')
           open(p,'w',encoding='utf-8').write(s)
           PY
+          fi
       - name: Syntax check
         run: |
           node --check app.js
@@ -50,9 +51,13 @@ jobs:
           test ! -e app.bundle.001
       - name: Frontend backend contract
         run: node tools/verify-contract.js
-      - name: Commit verified FINAL3 application files
+      - name: Commit verified FINAL3 application files when changed
         if: github.event_name == 'push'
         run: |
+          if git diff --quiet -- app.js apps-script/contract.json tools/verify-contract.js; then
+            echo "FINAL3 already committed"
+            exit 0
+          fi
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add app.js apps-script/contract.json tools/verify-contract.js
