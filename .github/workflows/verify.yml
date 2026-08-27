@@ -7,29 +7,13 @@ on:
     branches: [main]
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Apply FINAL3 once when needed
-        run: |
-          if ! grep -q "packageDirectSubmissionV116" app.js; then
-            python3 tools/patch-v116-direct-submission-final.py
-            python3 - <<'PY'
-          import json
-          p='apps-script/contract.json'
-          data=json.load(open(p,encoding='utf-8'))
-          data['build']='V116-FINAL3-20260827'
-          data.setdefault('features',{})['packageDirectSubmissionV116']=True
-          open(p,'w',encoding='utf-8').write(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
-          p='tools/verify-contract.js'
-          s=open(p,encoding='utf-8').read().replace('V116-FINAL2-20260827','V116-FINAL3-20260827')
-          open(p,'w',encoding='utf-8').write(s)
-          PY
-          fi
       - name: Syntax check
         run: |
           node --check app.js
@@ -43,6 +27,10 @@ jobs:
           test -f apps-script/contract.json
           test -f tools/verify-contract.js
           grep -q "const VERSION = 'V1.1.6'" app.js
+          grep -q "NON_JSON_RESPONSE" app.js
+          grep -q "submissionDeleteChains" app.js
+          grep -q "pdfPageObservers" app.js
+          grep -q "contentFileUploadV116" app.js
           grep -q "packageDirectSubmissionV116" app.js
           grep -q "loadXlsx" app.js
           grep -q "課程回傳設定" app.js
@@ -51,15 +39,3 @@ jobs:
           test ! -e app.bundle.001
       - name: Frontend backend contract
         run: node tools/verify-contract.js
-      - name: Commit verified FINAL3 application files when changed
-        if: github.event_name == 'push'
-        run: |
-          if git diff --quiet -- app.js apps-script/contract.json tools/verify-contract.js; then
-            echo "FINAL3 already committed"
-            exit 0
-          fi
-          git config user.name github-actions[bot]
-          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-          git add app.js apps-script/contract.json tools/verify-contract.js
-          git commit -m "feat: finalize direct course submission and xlsx export"
-          git push origin HEAD:main
