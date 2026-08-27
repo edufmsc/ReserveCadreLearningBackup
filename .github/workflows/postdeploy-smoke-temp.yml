@@ -1,0 +1,35 @@
+name: Postdeploy V116 smoke
+on:
+  push:
+    branches: [diagnostic/live-v116-postdeploy]
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe current API
+        env:
+          API_URL: https://script.google.com/macros/s/AKfycbwd17jSaxmpvmS6dn9wJemT_Yv7rRABA7Iwsu8VdWZVZvoAyZ7xaKFRg-Vp1LccpEUn0Q/exec
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess, tempfile, time
+          url=os.environ['API_URL']
+          tests=[
+            ('health', {'action':'health','payload':{},'sessionToken':''}),
+            ('invalid_login', {'action':'login','payload':{'employeeId':'__POSTDEPLOY_INVALID__','password':'0000'},'sessionToken':''})
+          ]
+          for name,payload in tests:
+            path=tempfile.mktemp(); start=time.time()
+            p=subprocess.run(['curl','-sS','-L','--max-time','40','-o',path,'-w','HTTP=%{http_code} TYPE=%{content_type} TOTAL=%{time_total}', '-H','Content-Type: text/plain;charset=UTF-8','--data-binary',json.dumps(payload),url],text=True,capture_output=True)
+            body=open(path,'r',encoding='utf-8',errors='replace').read() if os.path.exists(path) else ''
+            print(name, 'RC='+str(p.returncode), p.stdout, 'WALL=%.3f'%(time.time()-start), 'PREFIX='+repr(body[:500]))
+            if p.returncode: raise SystemExit(name+' curl failed '+p.stderr)
+            try: data=json.loads(body)
+            except Exception as e: raise SystemExit(name+' NON_JSON '+str(e)+' '+repr(body[:180]))
+            if name=='health':
+              assert data.get('success') is True, data
+            else:
+              assert data.get('success') is False, data
+          PY
