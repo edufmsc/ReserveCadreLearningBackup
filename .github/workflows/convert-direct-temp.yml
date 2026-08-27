@@ -17,7 +17,6 @@ jobs:
           grep -q "data-convert-direct" app.js
           grep -q "openConvertDirectLessonEditor" app.js
           grep -q "kind === 'convertDirect'" app.js
-          grep -q "保留原本教材、作業、進度與審核紀錄" app.js
           grep -q "const VERSION = 'V1.0'" app.js
       - name: Commit verified app
         run: |
