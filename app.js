@@ -49,6 +49,10 @@
     adminCatalogLoading: null,
     submissionDeleteChains: new Map(),
     apiConnected: false,
+    connectionFailures: 0,
+    lastApiSuccessAt: 0,
+    healthCheckTimer: null,
+    sessionRestoreInFlight: null,
     selectedAdminContentFile: null
   };
 
@@ -63,14 +67,35 @@
     return !!(window.LEARNING_CONFIG && /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:\?.*)?$/i.test(clean(window.LEARNING_CONFIG.API_URL)));
   }
 
+  const SAFE_RETRY_ACTIONS = new Set(['health','bootstrap','studentPackages','adminOverview','adminCatalog','getSubmission','adminSubmissions','getPdfContent','exportProgress']);
+
+  function actionTimeout(action) {
+    if (action === 'health') return 12000;
+    if (action === 'bootstrap') return 12000;
+    if (action === 'login') return 18000;
+    if (['studentPackages','adminOverview','adminCatalog','getSubmission','adminSubmissions','exportProgress'].includes(action)) return 12000;
+    return 20000;
+  }
+
+  function markConnectionSuccess(version = '') {
+    state.apiConnected = true;
+    state.connectionFailures = 0;
+    state.lastApiSuccessAt = Date.now();
+    setModeBadge('online', version ? `後端正常｜${version}` : '後端正常');
+  }
+
+  function isSessionExpiredError(error) {
+    return /SESSION_EXPIRED|SESSION_REQUIRED/.test(error?.code || '') || /登入已逾時|請重新登入/.test(error?.message || '');
+  }
+
   async function api(action, payload = {}, token = state.token, options = {}) {
     if (!configured()) throw new Error('尚未設定 Apps Script /exec 網址。');
-    const retryable = options.retry === true && action !== 'bootstrap';
+    const retryable = options.retry === true || (options.retry !== false && SAFE_RETRY_ACTIONS.has(action));
     const attempts = retryable ? 2 : 1;
     let lastError;
     for (let attempt = 0; attempt < attempts; attempt++) {
       const controller = new AbortController();
-      const timeout = options.timeout || (action === 'health' ? 6000 : action === 'bootstrap' ? 7000 : action === 'login' ? 12000 : 15000);
+      const timeout = options.timeout || actionTimeout(action);
       const timer = setTimeout(() => controller.abort(), timeout);
       try {
         const response = await fetch(window.LEARNING_CONFIG.API_URL, {
@@ -82,20 +107,19 @@
         let result;
         try { result = JSON.parse(text); }
         catch {
-          const err = new Error('後端暫時無法提供資料，請稍後再試。');
-          err.code = 'NON_JSON_RESPONSE'; err.retryable = false; throw err;
+          const err = new Error('後端暫時回應異常，系統會自動重試。');
+          err.code = 'NON_JSON_RESPONSE'; err.retryable = true; throw err;
         }
+        markConnectionSuccess(action === 'health' ? clean(result?.data?.version) : '');
         if (!response.ok) { const err = new Error(result?.error?.message || '後端連線失敗。'); err.code = result?.error?.code || 'HTTP_ERROR'; err.retryable = response.status >= 500; throw err; }
         if (!result || result.success !== true) { const err = new Error(result?.error?.message || '後端處理失敗。'); err.code = result?.error?.code || 'SERVER_ERROR'; err.retryable = false; throw err; }
-        state.apiConnected = true;
-        if (action !== 'health') setModeBadge('online', '後端正常');
         return result.data;
       } catch (error) {
         lastError = error;
-        if (error?.name === 'AbortError') { const err = new Error('後端回應逾時，請再試一次。'); err.code='TIMEOUT'; err.retryable=true; lastError=err; }
-        const sessionExpired = /SESSION_EXPIRED|SESSION_REQUIRED/.test(lastError.code || '') || /登入已逾時|請重新登入/.test(lastError.message || '');
-        if (!retryable || sessionExpired || lastError.retryable === false || attempt === attempts - 1) throw lastError;
-        await new Promise(resolve => setTimeout(resolve, 250));
+        if (error?.name === 'AbortError') { const err = new Error('後端回應較慢，請稍候再試。'); err.code='TIMEOUT'; err.retryable=true; lastError=err; }
+        else if (error instanceof TypeError && !error.code) { const err = new Error('目前網路連線不穩定，請稍候。'); err.code='NETWORK_ERROR'; err.retryable=true; lastError=err; }
+        if (!retryable || isSessionExpiredError(lastError) || lastError.retryable === false || attempt === attempts - 1) throw lastError;
+        await new Promise(resolve => setTimeout(resolve, 500 + attempt * 500));
       } finally { clearTimeout(timer); }
     }
     throw lastError || new Error('連線失敗。');
@@ -312,19 +336,35 @@
     } catch {}
   }
 
-  async function checkHealth() {
+  async function checkHealth(options = {}) {
     if (!configured()) { setModeBadge('offline', '尚未設定'); return false; }
+    if (navigator.onLine === false) { setModeBadge('offline', '裝置離線'); return false; }
+    if (!state.apiConnected && !options.quiet) setModeBadge('checking', '正在連線…');
     try {
-      const data = await api('health', {}, '', { retry: false, timeout: 6000 });
+      const data = await api('health', {}, '', { retry: true, timeout: 12000 });
       const backendVersion = clean(data?.version);
-      if (data?.ok) { state.apiConnected = true; setModeBadge('online', backendVersion ? `後端正常｜${backendVersion}` : '後端正常'); }
-      else setModeBadge('offline', '資料異常');
       if (data?.features) state.features = { ...state.features, ...data.features };
+      if (data?.ok) markConnectionSuccess(backendVersion);
+      else setModeBadge('checking', '後端資料檢查中');
       return !!data?.ok;
-    } catch {
-      setModeBadge(state.apiConnected ? 'online' : 'offline', state.apiConnected ? '後端正常' : '連線異常');
+    } catch (error) {
+      state.connectionFailures += 1;
+      const recentlyConnected = state.lastApiSuccessAt && Date.now() - state.lastApiSuccessAt < 60000;
+      if (recentlyConnected) setModeBadge('online', '後端正常');
+      else if (state.connectionFailures < 2) setModeBadge('checking', '連線較慢｜自動重試');
+      else setModeBadge('offline', '連線異常');
       return false;
     }
+  }
+
+  function startConnectionMonitor() {
+    if (state.healthCheckTimer) clearInterval(state.healthCheckTimer);
+    state.healthCheckTimer = setInterval(() => {
+      if (document.hidden) return;
+      checkHealth({ quiet: true }).catch(() => {});
+    }, 60000);
+    window.addEventListener('online', () => checkHealth().catch(() => {}));
+    window.addEventListener('offline', () => setModeBadge('offline', '裝置離線'));
   }
 
   function captureBootstrap(data) {
@@ -356,7 +396,7 @@
     if (state.user?.roleKey === 'admin') return;
     if (!force && state.studentPackagesLoaded) return;
     if (state.studentPackagesLoading) return state.studentPackagesLoading;
-    const task = api('studentPackages', {}, state.token, { retry: false, timeout: 8000 })
+    const task = api('studentPackages', {}, state.token, { retry: true, timeout: 12000 })
       .then(data => {
         const packages = Array.isArray(data) ? data : (Array.isArray(data?.packages) ? data.packages : []);
         state.packages = packages;
@@ -373,7 +413,7 @@
     if (state.user?.roleKey !== 'admin') return;
     if (!force && state.adminCatalogLoaded) return;
     if (state.adminCatalogLoading) return state.adminCatalogLoading;
-    const task = api('adminCatalog', {}, state.token, { retry: false, timeout: 8000 })
+    const task = api('adminCatalog', {}, state.token, { retry: true, timeout: 12000 })
       .then(data => {
         const catalog = data?.catalog || data;
         state.adminCatalog = catalog || { packages: [], learners: [], assignments: [] };
@@ -410,25 +450,33 @@
   async function restoreSession() {
     const saved = readSession();
     if (!saved?.token) return false;
-    state.token = saved.token;
-    try {
-      const data = await api('bootstrap', {}, state.token, { retry: false, timeout: 7000 });
-      captureBootstrap(data);
-      saveSession();
-      renderDashboard();
-      if (state.features.lazyDataV114 && state.user?.roleKey !== 'admin') {
-        try { await ensureStudentPackages(); } catch (error) { showToast(error.message || '課程載入失敗'); }
-      }
-      await restoreSavedView();
-      hydrateDashboardData().catch(error => showToast(error.message || '資料載入失敗'));
-      return true;
-    } catch (error) {
-      // 恢復失敗就清掉本機舊 session，避免每次重新整理都再次卡在 bootstrap。
-      state.token = '';
-      clearSession();
-      clearViewState();
-      return false;
-    }
+    if (state.sessionRestoreInFlight) return state.sessionRestoreInFlight;
+    const restoreToken = saved.token;
+    state.token = restoreToken;
+    const task = (async () => {
+      try {
+        const data = await api('bootstrap', {}, restoreToken, { retry: true, timeout: 12000 });
+        if (state.token !== restoreToken && state.user) return true;
+        captureBootstrap(data);
+        saveSession();
+        renderDashboard();
+        if (state.features.lazyDataV114 && state.user?.roleKey !== 'admin') ensureStudentPackages().catch(error => showToast(error.message || '課程資料稍後自動重試'));
+        await restoreSavedView();
+        hydrateDashboardData().catch(error => showToast(error.message || '資料稍後自動重試'));
+        return true;
+      } catch (error) {
+        if (isSessionExpiredError(error)) {
+          if (state.token === restoreToken) state.token = '';
+          clearSession();
+          clearViewState();
+        } else {
+          state.token = restoreToken;
+        }
+        return false;
+      } finally { state.sessionRestoreInFlight = null; }
+    })();
+    state.sessionRestoreInFlight = task;
+    return task;
   }
 
   async function restoreSavedView() {
@@ -988,7 +1036,7 @@
     const panel = state.adminTab === 'courses' ? $('adminCoursesPanel') : $('adminPeoplePanel');
     if (panel) panel.innerHTML = '<div class="empty-state"><h3>更新學習紀錄中…</h3></div>';
     try {
-      const data = await api('adminOverview', {}, state.token, { retry: false, timeout: 8000 });
+      const data = await api('adminOverview', {}, state.token, { retry: true, timeout: 12000 });
       state.adminOverview = Array.isArray(data.overview) ? data.overview : [];
       state.overviewDirty = false;
       renderAdmin();
@@ -1752,7 +1800,7 @@
       $('loginMessage').hidden = true;
       const button = $('loginButton'); setButtonBusy(button, true, '登入中…');
       try { await login(clean($('employeeId').value), clean($('password').value)); }
-      catch (error) { state.token = ''; clearSession(); $('loginMessage').textContent = error.message || '登入失敗'; $('loginMessage').hidden = false; }
+      catch (error) { state.token = ''; if (isSessionExpiredError(error)) clearSession(); $('loginMessage').textContent = error?.code === 'TIMEOUT' ? '後端正在啟動或回應較慢，請稍候再按一次登入；不需要重新整理頁面。' : (error.message || '登入失敗'); $('loginMessage').hidden = false; }
       finally { setButtonBusy(button, false); }
     });
     $('togglePassword').onclick = () => { const input = $('password'); input.type = input.type === 'password' ? 'text' : 'password'; $('togglePassword').textContent = input.type === 'password' ? '顯示' : '隱藏'; };
@@ -1777,9 +1825,35 @@
   async function init() {
     loadFoldState();
     bindStaticEvents();
+    startConnectionMonitor();
     const healthTask = checkHealth();
-    const restored = await restoreSession();
-    if (!restored) { if ($('bootView')) $('bootView').hidden = true; $('loginView').hidden = false; $('dashboardView').hidden = true; }
+    const saved = readSession();
+    if (!saved?.token) {
+      if ($('bootView')) $('bootView').hidden = true;
+      $('loginView').hidden = false;
+      $('dashboardView').hidden = true;
+      healthTask.catch(() => {});
+      return;
+    }
+
+    const restoreTask = restoreSession();
+    const fastResult = await Promise.race([
+      restoreTask,
+      new Promise(resolve => setTimeout(() => resolve(null), 2500))
+    ]);
+    if (fastResult !== true && !state.user) {
+      if ($('bootView')) $('bootView').hidden = true;
+      $('loginView').hidden = false;
+      $('dashboardView').hidden = true;
+    }
+    if (fastResult === null) {
+      restoreTask.then(ok => {
+        if (!ok && !state.user) {
+          $('loginView').hidden = false;
+          $('dashboardView').hidden = true;
+        }
+      }).catch(() => {});
+    }
     healthTask.catch(() => {});
   }
 
