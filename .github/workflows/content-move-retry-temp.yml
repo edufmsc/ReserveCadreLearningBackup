@@ -1,0 +1,33 @@
+name: Temporary content move retry verifier
+on:
+  push:
+    branches: [fix/v1-content-move-retry]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Add source lesson to move request
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('app.js')
+          s=p.read_text(encoding='utf-8')
+          old="payload = { contentIds, targetLessonId };"
+          new="payload = { sourceLessonId, contentIds, targetLessonId };"
+          assert s.count(old)==1, s.count(old)
+          p.write_text(s.replace(old,new,1),encoding='utf-8')
+          PY
+          node --check app.js
+          node tools/verify-contract.js
+          grep -q "payload = { sourceLessonId, contentIds, targetLessonId }" app.js
+          grep -q "const VERSION = 'V1.0'" app.js
+      - name: Commit retry-safe request
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app.js
+          git commit -m "fix: make content move requests retry-safe"
+          git push origin HEAD:fix/v1-content-move-retry
