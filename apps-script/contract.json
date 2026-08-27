@@ -20,6 +20,7 @@
     "deleteContent",
     "moveLesson",
     "moveContent",
+    "moveContentsToLesson",
     "exportProgress",
     "saveProgress",
     "completeLesson",
@@ -47,6 +48,7 @@
     "cacheServiceV2": true,
     "batchUploadV114": true,
     "contentFileUploadV116": true,
-    "packageDirectSubmissionV116": true
+    "packageDirectSubmissionV116": true,
+    "contentMoveV1": true
   }
 }

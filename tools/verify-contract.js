@@ -29,7 +29,7 @@ if (missingFeatures.length) fail(`Apps Script contract missing frontend feature 
 const criticalActions = [
   'health','login','logout','bootstrap','studentPackages','adminOverview','adminCatalog',
   'savePackage','saveLesson','saveContent','saveAssignment','saveAssignmentsBatch',
-  'setPackageState','deletePackage','deleteLesson','deleteContent','moveLesson','moveContent',
+  'setPackageState','deletePackage','deleteLesson','deleteContent','moveLesson','moveContent','moveContentsToLesson',
   'exportProgress','saveProgress','completeLesson','getPdfContent','getSubmission',
   'uploadSubmissionFile','uploadSubmissionFilesBatch','removeSubmissionFile','submitSubmission',
   'adminSubmissions','reviewSubmission','forceCompletePackage','clearForceCompletePackage'
@@ -37,7 +37,7 @@ const criticalActions = [
 for (const action of criticalActions) {
   if (!supportedActions.has(action)) fail(`Required Apps Script action missing from contract: ${action}`);
 }
-for (const feature of ['lazyDataV114','batchUploadV114','contentFileUploadV116','submissions','forceComplete','packageDirectSubmissionV116']) {
+for (const feature of ['lazyDataV114','batchUploadV114','contentFileUploadV116','submissions','forceComplete','packageDirectSubmissionV116','contentMoveV1']) {
   if (contract.features?.[feature] !== true) fail(`Required Apps Script feature missing from contract: ${feature}`);
 }
 if (contract.build !== 'V1.0') fail(`Unexpected backend build id: ${contract.build}`);
