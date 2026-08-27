@@ -53,6 +53,7 @@
     lastApiSuccessAt: 0,
     healthCheckTimer: null,
     sessionRestoreInFlight: null,
+    authGeneration: 0,
     selectedAdminContentFile: null
   };
 
@@ -437,14 +438,21 @@
   }
 
   async function login(account, password) {
+    const generation = ++state.authGeneration;
     clearViewState();
-    const data = await api('login', { employeeId: account, password }, '', { timeout: 12000 });
+    const data = await api('login', { employeeId: account, password }, '', { timeout: 18000 });
+    if (generation !== state.authGeneration) {
+      if (data?.sessionToken) api('logout', {}, data.sessionToken, { timeout: 5000, retry: false }).catch(() => {});
+      return false;
+    }
     state.token = data.sessionToken;
     saveSession();
-    const bootstrap = data.bootstrap || await api('bootstrap', {}, state.token, { retry: true });
+    const bootstrap = data.bootstrap || await api('bootstrap', {}, state.token, { retry: true, timeout: 12000 });
+    if (generation !== state.authGeneration) return false;
     captureBootstrap(bootstrap);
     renderDashboard();
     hydrateDashboardData().catch(error => showToast(error.message || '資料載入失敗'));
+    return true;
   }
 
   async function restoreSession() {
@@ -452,10 +460,12 @@
     if (!saved?.token) return false;
     if (state.sessionRestoreInFlight) return state.sessionRestoreInFlight;
     const restoreToken = saved.token;
+    const generation = state.authGeneration;
     state.token = restoreToken;
     const task = (async () => {
       try {
         const data = await api('bootstrap', {}, restoreToken, { retry: true, timeout: 12000 });
+        if (generation !== state.authGeneration) return false;
         if (state.token !== restoreToken && state.user) return true;
         captureBootstrap(data);
         saveSession();
@@ -465,11 +475,12 @@
         hydrateDashboardData().catch(error => showToast(error.message || '資料稍後自動重試'));
         return true;
       } catch (error) {
+        if (generation !== state.authGeneration) return false;
         if (isSessionExpiredError(error)) {
           if (state.token === restoreToken) state.token = '';
           clearSession();
           clearViewState();
-        } else {
+        } else if (state.token === restoreToken || !state.user) {
           state.token = restoreToken;
         }
         return false;
@@ -1782,7 +1793,8 @@
   }
 
   function logout() {
-    // V1.1.4: 使用者按下登出後立即切回登入頁；伺服器 session 清除改為背景執行。
+    // FINAL4: invalidate any in-flight login/session restore before clearing UI.
+    state.authGeneration += 1;
     const token = state.token;
     if (state.activeLessonId && !state.previewMode && state.tracker?.dirty) flushProgress(false).catch(() => {});
     stopTracker();
