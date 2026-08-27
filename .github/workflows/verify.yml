@@ -26,7 +26,7 @@ jobs:
           test -f api_config.js
           test -f apps-script/contract.json
           test -f tools/verify-contract.js
-          grep -q "const VERSION = 'V1.1.6'" app.js
+          grep -q "const VERSION = 'V1.0'" app.js
           grep -q "NON_JSON_RESPONSE" app.js
           grep -q "submissionDeleteChains" app.js
           grep -q "pdfPageObservers" app.js
@@ -34,7 +34,7 @@ jobs:
           grep -q "packageDirectSubmissionV116" app.js
           grep -q "loadXlsx" app.js
           grep -q "課程回傳設定" app.js
-          grep -q "V1.1.6" index.html
+          grep -q "V1.0" index.html
           test ! -e app.v112.loader.js
           test ! -e app.bundle.001
       - name: Frontend backend contract
