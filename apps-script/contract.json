@@ -1,6 +1,6 @@
 {
-  "version": "V1.1.6",
-  "build": "V116-FINAL4-20260827",
+  "version": "V1.0",
+  "build": "V1.0",
   "actions": [
     "health",
     "login",
