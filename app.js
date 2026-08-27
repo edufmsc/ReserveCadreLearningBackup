@@ -1425,7 +1425,7 @@
         const contentIds = clean($('editMoveContentIds').value).split(',').map(clean).filter(Boolean);
         const targetLessonId = $('editMoveTargetLessonId').value;
         if (!contentIds.length || !targetLessonId) throw new Error('請選擇教材與目標子課程');
-        payload = { contentIds, targetLessonId };
+        payload = { sourceLessonId, contentIds, targetLessonId };
         state.manageOpenPackages.add(findCatalogLesson(sourceLessonId)?.packageId || '');
         state.manageOpenLessons.add(targetLessonId);
       } else if (kind === 'convertDirect') {
