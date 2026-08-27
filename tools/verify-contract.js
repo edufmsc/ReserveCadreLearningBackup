@@ -40,6 +40,6 @@ for (const action of criticalActions) {
 for (const feature of ['lazyDataV114','batchUploadV114','contentFileUploadV116','submissions','forceComplete']) {
   if (contract.features?.[feature] !== true) fail(`Required Apps Script feature missing from contract: ${feature}`);
 }
-if (contract.build !== 'V116-FINAL-20260826') fail(`Unexpected backend build id: ${contract.build}`);
+if (contract.build !== 'V116-FINAL2-20260827') fail(`Unexpected backend build id: ${contract.build}`);
 
 console.log(`Contract OK: ${frontendVersion}; frontend actions=${requiredActions.size}; contract actions=${supportedActions.size}; frontend features=${referencedFeatures.size}; build=${contract.build}`);
