@@ -54,7 +54,12 @@
     healthCheckTimer: null,
     sessionRestoreInFlight: null,
     authGeneration: 0,
-    selectedAdminContentFile: null
+    selectedAdminContentFile: null,
+    adminCourseId: '',
+    adminCourseStatus: '',
+    adminCourseStore: '',
+    adminCourseSearch: '',
+    adminCourseSort: 'attention'
   };
 
   const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, ch => ({
@@ -1084,18 +1089,86 @@
     return [...map.values()];
   }
 
+  function adminCourseRows(packageId) {
+    return (state.adminOverview || []).map(person => {
+      const pkg = (person.packages || []).find(x => x.id === packageId);
+      if (!pkg) return null;
+      return { person, pkg, summary: packageSummary(pkg) };
+    }).filter(Boolean);
+  }
+
+  function adminCourseStatusRank(status) {
+    return status === 'not_started' ? 0 : status === 'in_progress' ? 1 : status === 'complete' ? 2 : 9;
+  }
+
+  function renderAdminCoursePersonDetails(button) {
+    const employeeId = clean(button.dataset.coursePerson);
+    const packageId = clean(button.dataset.coursePackage);
+    const row = button.closest('.person-package');
+    const body = row?.querySelector(':scope > .person-package__body');
+    if (!body) return;
+    if (body.dataset.loaded !== '1') {
+      const person = (state.adminOverview || []).find(x => clean(x.employeeId) === employeeId);
+      const pkg = (person?.packages || []).find(x => clean(x.id) === packageId);
+      body.innerHTML = pkg ? (pkg.lessons || []).map(lesson => `<div class="admin-lesson-row"><strong>${escapeHtml(visibleLessonTitle(lesson))}</strong>${statusTag(lesson.status)}<span class="admin-lesson-meta">影片 ${formatSeconds(lesson.videoSeconds)}｜PDF ${formatSeconds(lesson.pdfSeconds)}｜完成 ${formatDateTime(lesson.completedAt)}</span></div>`).join('') || '<div class="manage-empty">此課程沒有子課程明細</div>' : '<div class="manage-empty">找不到課程明細</div>';
+      body.dataset.loaded = '1';
+    }
+    body.hidden = !body.hidden;
+    button.classList.toggle('is-open', !body.hidden);
+  }
+
+  function bindAdminCourseViewEvents() {
+    const course = $('adminCourseSelect'), status = $('adminCourseStatus'), store = $('adminCourseStore'), search = $('adminCourseSearch'), sort = $('adminCourseSort');
+    if (course) course.onchange = () => { state.adminCourseId = course.value; state.adminCourseStatus = ''; state.adminCourseStore = ''; state.adminCourseSearch = ''; renderAdminCourses(); };
+    if (status) status.onchange = () => { state.adminCourseStatus = status.value; renderAdminCourses(); };
+    if (store) store.onchange = () => { state.adminCourseStore = store.value; renderAdminCourses(); };
+    if (search) search.oninput = () => { state.adminCourseSearch = search.value; renderAdminCourseResultList(); };
+    if (sort) sort.onchange = () => { state.adminCourseSort = sort.value; renderAdminCourseResultList(); };
+    document.querySelectorAll('[data-admin-course-status]').forEach(button => button.onclick = () => { state.adminCourseStatus = button.dataset.adminCourseStatus || ''; renderAdminCourses(); });
+  }
+
+  function filteredAdminCourseRows() {
+    if (!state.adminCourseId) return [];
+    const q = normalize(state.adminCourseSearch);
+    let rows = adminCourseRows(state.adminCourseId).filter(({ person, summary }) => {
+      if (state.adminCourseStatus && summary.status !== state.adminCourseStatus) return false;
+      if (state.adminCourseStore && clean(person.store) !== state.adminCourseStore) return false;
+      return !q || normalize(`${person.employeeId} ${person.name} ${person.store} ${person.area}`).includes(q);
+    });
+    const collator = new Intl.Collator('zh-Hant', { numeric: true, sensitivity: 'base' });
+    rows.sort((a,b) => {
+      if (state.adminCourseSort === 'store') return collator.compare(clean(a.person.store), clean(b.person.store)) || collator.compare(clean(a.person.name), clean(b.person.name));
+      if (state.adminCourseSort === 'name') return collator.compare(clean(a.person.name), clean(b.person.name));
+      if (state.adminCourseSort === 'employee') return collator.compare(clean(a.person.employeeId), clean(b.person.employeeId));
+      return adminCourseStatusRank(a.summary.status) - adminCourseStatusRank(b.summary.status) || collator.compare(clean(a.person.store), clean(b.person.store)) || collator.compare(clean(a.person.name), clean(b.person.name));
+    });
+    return rows;
+  }
+
+  function renderAdminCourseResultList() {
+    const host = $('adminCourseResultList');
+    const count = $('adminCourseResultCount');
+    if (!host) return;
+    const rows = filteredAdminCourseRows();
+    if (count) count.textContent = `顯示 ${rows.length} 人`;
+    host.innerHTML = rows.length ? rows.map(({ person, pkg, summary }) => `<div class="person-package admin-course-person"><button class="person-package__toggle" type="button" data-course-person="${escapeHtml(person.employeeId)}" data-course-package="${escapeHtml(pkg.id)}"><span><strong>${escapeHtml(person.name)}｜${escapeHtml(person.employeeId)}</strong><small>${escapeHtml(person.store || '未設定店別')}｜${summary.done}/${summary.total} 完成</small></span>${statusTag(summary.status)}</button><div class="person-package__body" hidden></div></div>`).join('') : '<div class="empty-state"><h3>目前篩選條件下沒有資料</h3><p>可調整狀態、店別或搜尋條件。</p></div>';
+    host.querySelectorAll('[data-course-person]').forEach(button => button.onclick = () => renderAdminCoursePersonDetails(button));
+  }
+
   function renderAdminCourses() {
-    const packages = uniquePackagesForAdmin().filter(pkg => matchesAdminSearch(`${pkg.id} ${pkg.title}`));
-    $('adminCoursesPanel').innerHTML = packages.length ? packages.map(info => {
-      const rows = state.adminOverview.map(person => {
-        const pkg = (person.packages || []).find(x => x.id === info.id);
-        if (!pkg) return '';
-        const summary = packageSummary(pkg);
-        return `<div class="person-package"><button class="person-package__toggle" type="button"><span><strong>${escapeHtml(person.name)}｜${escapeHtml(person.employeeId)}</strong><small>${escapeHtml(person.store)}｜${summary.done}/${summary.total} 完成</small></span>${statusTag(summary.status)}</button><div class="person-package__body" hidden>${(pkg.lessons || []).map(lesson => `<div class="admin-lesson-row"><strong>${escapeHtml(visibleLessonTitle(lesson))}</strong>${statusTag(lesson.status)}<span class="admin-lesson-meta">影片 ${formatSeconds(lesson.videoSeconds)}｜PDF ${formatSeconds(lesson.pdfSeconds)}｜完成 ${formatDateTime(lesson.completedAt)}</span></div>`).join('')}</div></div>`;
-      }).filter(Boolean).join('');
-      return `<article class="accordion-card"><button class="accordion-toggle" type="button"><span class="accordion-title"><strong>${escapeHtml(info.title)}</strong><span>查看帳號學習狀況</span></span><span class="accordion-arrow">›</span></button><div class="accordion-content" hidden>${rows}</div></article>`;
-    }).join('') : '<div class="empty-state"><h3>查無資料</h3></div>';
-    bindAdminAccordions($('adminCoursesPanel'));
+    const host = $('adminCoursesPanel');
+    if (!host) return;
+    const packages = uniquePackagesForAdmin().sort((a,b) => clean(a.title).localeCompare(clean(b.title), 'zh-Hant'));
+    if (state.adminCourseId && !packages.some(x => x.id === state.adminCourseId)) state.adminCourseId = '';
+    const selectedRows = state.adminCourseId ? adminCourseRows(state.adminCourseId) : [];
+    const stores = [...new Set(selectedRows.map(x => clean(x.person.store)).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'zh-Hant'));
+    if (state.adminCourseStore && !stores.includes(state.adminCourseStore)) state.adminCourseStore = '';
+    const counts = { all: selectedRows.length, not_started: 0, in_progress: 0, complete: 0 };
+    selectedRows.forEach(x => { if (Object.prototype.hasOwnProperty.call(counts, x.summary.status)) counts[x.summary.status]++; });
+    const options = packages.map(pkg => `<option value="${escapeHtml(pkg.id)}" ${pkg.id === state.adminCourseId ? 'selected' : ''}>${escapeHtml(pkg.title)}</option>`).join('');
+    host.innerHTML = `<section class="admin-course-filter-card"><div class="admin-course-filter-grid"><label class="field-group"><span>課程</span><select id="adminCourseSelect"><option value="">請先選擇課程</option>${options}</select></label><label class="field-group"><span>狀態</span><select id="adminCourseStatus" ${state.adminCourseId ? '' : 'disabled'}><option value="" ${!state.adminCourseStatus ? 'selected' : ''}>全部狀態</option><option value="not_started" ${state.adminCourseStatus === 'not_started' ? 'selected' : ''}>未開始</option><option value="in_progress" ${state.adminCourseStatus === 'in_progress' ? 'selected' : ''}>進行中</option><option value="complete" ${state.adminCourseStatus === 'complete' ? 'selected' : ''}>已完成</option></select></label><label class="field-group"><span>店別</span><select id="adminCourseStore" ${state.adminCourseId ? '' : 'disabled'}><option value="">全部店別</option>${stores.map(store => `<option value="${escapeHtml(store)}" ${store === state.adminCourseStore ? 'selected' : ''}>${escapeHtml(store)}</option>`).join('')}</select></label><label class="field-group"><span>排序</span><select id="adminCourseSort" ${state.adminCourseId ? '' : 'disabled'}><option value="attention" ${state.adminCourseSort === 'attention' ? 'selected' : ''}>需追蹤優先</option><option value="store" ${state.adminCourseSort === 'store' ? 'selected' : ''}>店別</option><option value="name" ${state.adminCourseSort === 'name' ? 'selected' : ''}>姓名</option><option value="employee" ${state.adminCourseSort === 'employee' ? 'selected' : ''}>帳號</option></select></label></div>${state.adminCourseId ? `<div class="admin-course-summary-row"><button type="button" class="admin-course-stat ${!state.adminCourseStatus ? 'is-active' : ''}" data-admin-course-status=""><span>指派</span><strong>${counts.all}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'not_started' ? 'is-active' : ''}" data-admin-course-status="not_started"><span>未開始</span><strong>${counts.not_started}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'in_progress' ? 'is-active' : ''}" data-admin-course-status="in_progress"><span>進行中</span><strong>${counts.in_progress}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'complete' ? 'is-active' : ''}" data-admin-course-status="complete"><span>已完成</span><strong>${counts.complete}</strong></button></div><div class="admin-course-search-row"><input id="adminCourseSearch" type="search" value="${escapeHtml(state.adminCourseSearch)}" placeholder="搜尋帳號、姓名或店別"><span id="adminCourseResultCount" class="package-meta"></span></div><p class="form-hint">預設將「未開始 → 進行中 → 已完成」排在前面；點人員後才載入子課程細項，避免一次展開大量資料。</p><div id="adminCourseResultList" class="admin-course-result-list"></div>` : '<div class="empty-state admin-course-empty"><h3>請先選擇要查看的課程</h3><p>選定後可依狀態、店別、帳號或姓名快速篩選。</p></div>'}</section>`;
+    bindAdminCourseViewEvents();
+    if (state.adminCourseId) renderAdminCourseResultList();
   }
 
   function bindAdminAccordions(root) {
@@ -1915,6 +1988,7 @@
     $('adminManagePanel').hidden = tab !== 'manage';
     $('adminPeoplePanel').hidden = tab !== 'people';
     $('adminCoursesPanel').hidden = tab !== 'courses';
+    if ($('adminSearchForm')) $('adminSearchForm').hidden = tab !== 'people';
     if ($('adminSubmissionPanel')) $('adminSubmissionPanel').hidden = tab !== 'submissions';
     if (tab === 'manage') {
       if (state.features.lazyDataV114 && !state.adminCatalogLoaded) {
@@ -1973,7 +2047,7 @@
     $('adminEditorOverlay').onclick = event => { if (event.target === $('adminEditorOverlay')) closeAdminEditor(); };
     document.querySelectorAll('[data-student-tab]').forEach(button => button.onclick = () => setStudentTab(button.dataset.studentTab));
     document.querySelectorAll('[data-admin-tab]').forEach(button => button.onclick = () => setAdminTab(button.dataset.adminTab));
-    $('adminSearch').oninput = () => { renderAdminPeople(); renderAdminCourses(); };
+    $('adminSearch').oninput = renderAdminPeople;
     window.addEventListener('beforeunload', () => { saveViewState(); if (state.tracker?.dirty) flushProgress(false); });
     document.addEventListener('visibilitychange', () => { if (document.hidden) { saveViewState(); if (state.tracker?.dirty) flushProgress(false); } });
     let viewSaveTimer = 0;
