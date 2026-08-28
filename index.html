@@ -12,6 +12,19 @@
   <link rel="preconnect" href="https://www.youtube.com" crossorigin>
   <link rel="dns-prefetch" href="//script.google.com">
   <link rel="stylesheet" href="styles.css?v=1.0">
+  <style>
+    #studentReportPanel{display:none}
+    #studentDashboard:has([data-student-tab="report"].is-active) #studentReportPanel{display:block}
+    .report-panel-card{border:1px solid var(--line);border-radius:17px;background:#fff;box-shadow:0 6px 18px rgba(72,42,26,.06);overflow:hidden}
+    .report-panel-head{display:flex;justify-content:space-between;gap:14px;align-items:flex-start;padding:16px;border-bottom:1px solid var(--line)}
+    .report-panel-head h2{margin-bottom:5px}.report-panel-head p{margin:0;font-size:.82rem}
+    .report-panel-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+    .report-panel-actions a{text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
+    .report-frame-wrap{background:var(--soft)}
+    .report-frame{display:block;width:100%;height:min(78vh,980px);min-height:680px;border:0;background:#fff}
+    .report-panel-note{margin:0;padding:11px 16px;border-top:1px solid var(--line);color:var(--muted);font-size:.78rem;background:#fffdfa}
+    @media (max-width:700px){.report-panel-head{display:grid}.report-panel-actions{justify-content:stretch}.report-panel-actions>*{flex:1}.report-frame{height:72vh;min-height:620px}}
+  </style>
 </head>
 <body>
   <div class="app-shell">
@@ -41,9 +54,16 @@
         </section>
 
         <section id="studentDashboard" hidden>
-          <nav class="tab-bar" aria-label="學員功能"><button class="tab-button is-active" data-student-tab="courses" type="button">我的課程</button><button class="tab-button" data-student-tab="records" type="button">學習紀錄</button></nav>
+          <nav class="tab-bar" aria-label="學員功能"><button class="tab-button is-active" data-student-tab="courses" type="button">我的課程</button><button class="tab-button" data-student-tab="records" type="button">學習紀錄</button><button class="tab-button" data-student-tab="report" type="button">紀錄回報</button></nav>
           <section id="studentCoursesPanel" class="tab-panel"><div id="studentSummary" class="summary-grid"></div><div class="panel-heading"><div><h2>我的課程</h2></div></div><div id="packageList" class="package-list"></div></section>
           <section id="studentRecordsPanel" class="tab-panel" hidden><div class="panel-heading"><div><h2>學習紀錄</h2></div></div><div id="studentRecordsList" class="record-list"></div></section>
+          <section id="studentReportPanel" class="tab-panel" aria-label="紀錄回報">
+            <article class="report-panel-card">
+              <div class="report-panel-head"><div><p class="step-label">紀錄回報</p><h2>實際錄用紀錄回報</h2><p>每完成一位實際錄用請填寫一筆；送出後可立即繼續回報下一筆。</p></div><div class="report-panel-actions"><button id="resetRecordReportButton" class="secondary-button primary-button--fit" type="button">填寫下一筆</button><a class="secondary-button primary-button--fit" href="https://forms.gle/rSCuspJrPx5YmKAp7" target="_blank" rel="noopener">另開問卷</a></div></div>
+              <div class="report-frame-wrap"><iframe id="recordReportFrame" class="report-frame" title="實際錄用紀錄回報問卷" src="https://forms.gle/rSCuspJrPx5YmKAp7" loading="lazy" referrerpolicy="strict-origin-when-cross-origin">正在載入問卷…</iframe></div>
+              <p class="report-panel-note">若剛送出一筆要繼續填寫，請按「填寫下一筆」重新載入空白問卷；若裝置無法顯示內嵌問卷，可使用「另開問卷」。</p>
+            </article>
+          </section>
         </section>
 
         <section id="adminDashboard" hidden>
@@ -62,5 +82,24 @@
 
   <script src="api_config.js?v=1.0"></script>
   <script src="app.js?v=1.0"></script>
+  <script>
+    (() => {
+      const FORM_URL = 'https://forms.gle/rSCuspJrPx5YmKAp7';
+      const button = document.getElementById('resetRecordReportButton');
+      const frame = document.getElementById('recordReportFrame');
+      if (!button || !frame) return;
+      button.addEventListener('click', () => {
+        button.disabled = true;
+        button.textContent = '重新載入中…';
+        frame.src = 'about:blank';
+        window.setTimeout(() => {
+          frame.src = FORM_URL;
+          button.disabled = false;
+          button.textContent = '填寫下一筆';
+          frame.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 120);
+      });
+    })();
+  </script>
 </body>
 </html>
