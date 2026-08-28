@@ -1179,7 +1179,7 @@
     const normal = normalLessons(pkg).sort((a,b) => n(a.sort) - n(b.sort));
     const lessonRows = normal.map((lesson,index) => renderManageLesson(lesson, false, { first:index===0, last:index===normal.length-1 })).join('');
     return `<article class="manage-card"><div class="manage-card__head"><div class="manage-card__title"><strong>${escapeHtml(pkg.title)}</strong><small>${escapeHtml(pkg.description || '')}｜${adminEnabledText(pkg.enabled)}｜已指派 ${activeAssign} 人</small><div style="margin-top:7px">${publishBadge(pkg)}</div>${errors.length ? `<div class="manage-warning">${escapeHtml(errors.slice(0,3).join('；'))}${errors.length > 3 ? '…' : ''}</div>` : ''}</div>
-      <div class="manage-card__actions"><button class="mini-button" type="button" data-toggle-manage="${escapeHtml(pkg.id)}">${open ? '收合' : '展開'}</button><button class="mini-button" type="button" data-preview-package="${escapeHtml(pkg.id)}">預覽</button><button class="mini-button" type="button" data-edit-package="${escapeHtml(pkg.id)}">編輯</button><button class="mini-button" type="button" data-add-package-content="${escapeHtml(pkg.id)}">＋教材</button>${state.features.packageDirectSubmissionV116 ? `<button class="mini-button" type="button" data-direct-submission="${escapeHtml(pkg.id)}">回傳設定</button>` : ''}<button class="mini-button" type="button" data-add-lesson="${escapeHtml(pkg.id)}">＋子課程</button><button class="mini-button" type="button" data-assign-package="${escapeHtml(pkg.id)}">批次指派</button>${pkg.publishState === '已發布' ? `<button class="mini-button" type="button" data-draft-package="${escapeHtml(pkg.id)}">轉草稿</button>` : `<button class="mini-button" type="button" data-publish-package="${escapeHtml(pkg.id)}">發布</button>`}<button class="mini-button mini-button--danger" type="button" data-delete-package="${escapeHtml(pkg.id)}">刪除／封存</button></div></div>
+      <div class="manage-card__actions"><button class="mini-button" type="button" data-toggle-manage="${escapeHtml(pkg.id)}">${open ? '收合' : '展開'}</button><button class="mini-button" type="button" data-preview-package="${escapeHtml(pkg.id)}">預覽</button><button class="mini-button" type="button" data-edit-package="${escapeHtml(pkg.id)}">編輯</button>${state.features.courseReuseV1 ? `<button class="mini-button" type="button" data-copy-package="${escapeHtml(pkg.id)}">複製課程</button>` : ''}<button class="mini-button" type="button" data-add-package-content="${escapeHtml(pkg.id)}">＋教材</button>${state.features.courseReuseV1 ? `<button class="mini-button" type="button" data-library-package="${escapeHtml(pkg.id)}">從既有教材選用</button>` : ''}${state.features.packageDirectSubmissionV116 ? `<button class="mini-button" type="button" data-direct-submission="${escapeHtml(pkg.id)}">回傳設定</button>` : ''}<button class="mini-button" type="button" data-add-lesson="${escapeHtml(pkg.id)}">＋子課程</button><button class="mini-button" type="button" data-assign-package="${escapeHtml(pkg.id)}">批次指派</button>${pkg.publishState === '已發布' ? `<button class="mini-button" type="button" data-draft-package="${escapeHtml(pkg.id)}">轉草稿</button>` : `<button class="mini-button" type="button" data-publish-package="${escapeHtml(pkg.id)}">發布</button>`}<button class="mini-button mini-button--danger" type="button" data-delete-package="${escapeHtml(pkg.id)}">刪除／封存</button></div></div>
       <div class="manage-card__body" data-manage-body="${escapeHtml(pkg.id)}" ${open ? '' : 'hidden'}>${directRow}${lessonRows || '<div class="manage-empty">尚未建立子課程；也可以直接用上方「＋教材」建立課程教材。</div>'}</div></article>`;
   }
 
@@ -1190,7 +1190,7 @@
     const contentRows = contents.map((content, index) => `<div class="manage-content">${canMoveDirect ? `<label class="v1-content-move-check" title="勾選後可批次移動"><input type="checkbox" aria-label="勾選教材 ${escapeHtml(content.title)}" data-content-move-check data-source-lesson="${escapeHtml(lesson.id)}" value="${escapeHtml(content.id)}"></label>` : ''}<span><strong>${escapeHtml(content.title)}</strong><small>${escapeHtml(contentTypeLabel(content.type))}｜${adminEnabledText(content.enabled)}</small></span><div class="v1-content-actions"><button class="mini-button" type="button" data-edit-content="${escapeHtml(content.id)}">編輯</button>${canMoveDirect ? `<button class="mini-button" type="button" data-move-content-to-lesson="${escapeHtml(content.id)}" data-source-lesson="${escapeHtml(lesson.id)}">移至子課程</button>` : ''}<button class="mini-button" type="button" data-move-content="${escapeHtml(content.id)}" data-direction="-1" ${index === 0 ? 'disabled' : ''}>↑</button><button class="mini-button" type="button" data-move-content="${escapeHtml(content.id)}" data-direction="1" ${index === contents.length - 1 ? 'disabled' : ''}>↓</button><button class="mini-button mini-button--danger" type="button" data-delete-content="${escapeHtml(content.id)}">刪除</button></div></div>`).join('');
     const batchToolbar = canMoveDirect && contents.length ? `<div class="v1-content-move-toolbar"><button class="mini-button" type="button" data-select-all-move="${escapeHtml(lesson.id)}">全選教材</button><button class="mini-button" type="button" data-clear-all-move="${escapeHtml(lesson.id)}">取消勾選</button><button class="secondary-button primary-button--fit" type="button" data-batch-move-source="${escapeHtml(lesson.id)}">批次移至子課程</button><small>只搬教材與該教材的觀看／閱讀進度；作業附件與審核狀態維持原課程。</small></div>` : '';
     const normal = !direct;
-    return `<div class="manage-row ${open ? 'is-v1-lesson-open' : ''}"><div class="manage-row__top"><div><strong>${direct ? '課程教材' : escapeHtml(lesson.title)}</strong><div class="manage-row__meta">${direct ? escapeHtml(directLessonMeta(lesson)) : `${lesson.required ? '必修' : '選修'}｜${escapeHtml(ruleText(lesson))}｜${adminEnabledText(lesson.enabled)}｜適用：${escapeHtml(applicabilityLabel(lesson))}${lesson.submissionMode && lesson.submissionMode !== '不需要' ? `｜作業：${escapeHtml(lesson.submissionMode)}` : ''}`}</div></div><div class="manage-row__actions">${contents.length ? `<button class="mini-button" type="button" data-toggle-lesson-content="${escapeHtml(lesson.id)}">${open ? `收合教材 (${contents.length})` : `展開教材 (${contents.length})`}</button>` : ''}${normal ? `<button class="mini-button" type="button" data-edit-lesson="${escapeHtml(lesson.id)}">編輯</button>` : `<button class="mini-button" type="button" data-convert-direct="${escapeHtml(lesson.id)}">轉為子課程</button>`}<button class="mini-button" type="button" data-add-content="${escapeHtml(lesson.id)}">＋教材</button>${normal ? `<button class="mini-button" type="button" data-move-lesson="${escapeHtml(lesson.id)}" data-direction="-1" ${position.first ? 'disabled' : ''}>↑</button><button class="mini-button" type="button" data-move-lesson="${escapeHtml(lesson.id)}" data-direction="1" ${position.last ? 'disabled' : ''}>↓</button><button class="mini-button mini-button--danger" type="button" data-delete-lesson="${escapeHtml(lesson.id)}">刪除</button>` : ''}</div></div><div class="manage-content-list" data-lesson-content-list="${escapeHtml(lesson.id)}" ${open ? '' : 'hidden'}>${batchToolbar}${contentRows || '<div class="manage-empty">尚未建立教材</div>'}</div></div>`;
+    return `<div class="manage-row ${open ? 'is-v1-lesson-open' : ''}"><div class="manage-row__top"><div><strong>${direct ? '課程教材' : escapeHtml(lesson.title)}</strong><div class="manage-row__meta">${direct ? escapeHtml(directLessonMeta(lesson)) : `${lesson.required ? '必修' : '選修'}｜${escapeHtml(ruleText(lesson))}｜${adminEnabledText(lesson.enabled)}｜適用：${escapeHtml(applicabilityLabel(lesson))}${lesson.submissionMode && lesson.submissionMode !== '不需要' ? `｜作業：${escapeHtml(lesson.submissionMode)}` : ''}`}</div></div><div class="manage-row__actions">${contents.length ? `<button class="mini-button" type="button" data-toggle-lesson-content="${escapeHtml(lesson.id)}">${open ? `收合教材 (${contents.length})` : `展開教材 (${contents.length})`}</button>` : ''}${normal ? `<button class="mini-button" type="button" data-edit-lesson="${escapeHtml(lesson.id)}">編輯</button>${state.features.courseReuseV1 ? `<button class="mini-button" type="button" data-copy-lesson="${escapeHtml(lesson.id)}">複製</button>` : ''}` : `<button class="mini-button" type="button" data-convert-direct="${escapeHtml(lesson.id)}">轉為子課程</button>`}<button class="mini-button" type="button" data-add-content="${escapeHtml(lesson.id)}">＋教材</button>${state.features.courseReuseV1 ? `<button class="mini-button" type="button" data-library-lesson="${escapeHtml(lesson.id)}">從既有教材選用</button>` : ''}${normal ? `<button class="mini-button" type="button" data-move-lesson="${escapeHtml(lesson.id)}" data-direction="-1" ${position.first ? 'disabled' : ''}>↑</button><button class="mini-button" type="button" data-move-lesson="${escapeHtml(lesson.id)}" data-direction="1" ${position.last ? 'disabled' : ''}>↓</button><button class="mini-button mini-button--danger" type="button" data-delete-lesson="${escapeHtml(lesson.id)}">刪除</button>` : ''}</div></div><div class="manage-content-list" data-lesson-content-list="${escapeHtml(lesson.id)}" ${open ? '' : 'hidden'}>${batchToolbar}${contentRows || '<div class="manage-empty">尚未建立教材</div>'}</div></div>`;
   }
 
   function bindAdminManageEvents() {
@@ -1206,11 +1206,15 @@
     });
     document.querySelectorAll('[data-preview-package]').forEach(b => b.onclick = () => openAdminPreview(findCatalogPackage(b.dataset.previewPackage)));
     document.querySelectorAll('[data-edit-package]').forEach(b => b.onclick = () => openPackageEditor(findCatalogPackage(b.dataset.editPackage)));
+    document.querySelectorAll('[data-copy-package]').forEach(b => b.onclick = () => openCopyPackageEditor(findCatalogPackage(b.dataset.copyPackage)));
     document.querySelectorAll('[data-add-package-content]').forEach(b => b.onclick = () => openDirectContentEditor(findCatalogPackage(b.dataset.addPackageContent)));
+    document.querySelectorAll('[data-library-package]').forEach(b => b.onclick = () => openMaterialLibrary('', b.dataset.libraryPackage));
     document.querySelectorAll('[data-direct-submission]').forEach(b => b.onclick = () => openDirectSubmissionEditor(findCatalogPackage(b.dataset.directSubmission)));
     document.querySelectorAll('[data-add-lesson]').forEach(b => b.onclick = () => openLessonEditor(null, b.dataset.addLesson));
     document.querySelectorAll('[data-edit-lesson]').forEach(b => b.onclick = () => openLessonEditor(findCatalogLesson(b.dataset.editLesson)));
+    document.querySelectorAll('[data-copy-lesson]').forEach(b => b.onclick = () => openCopyLessonEditor(findCatalogLesson(b.dataset.copyLesson)));
     document.querySelectorAll('[data-convert-direct]').forEach(b => b.onclick = () => openConvertDirectLessonEditor(findCatalogLesson(b.dataset.convertDirect)));
+    document.querySelectorAll('[data-library-lesson]').forEach(b => b.onclick = () => openMaterialLibrary(b.dataset.libraryLesson, ''));
     document.querySelectorAll('[data-move-content-to-lesson]').forEach(b => b.onclick = () => openMoveContentsEditor(b.dataset.sourceLesson, [b.dataset.moveContentToLesson]));
     document.querySelectorAll('[data-select-all-move]').forEach(b => b.onclick = () => document.querySelectorAll(`input[data-content-move-check][data-source-lesson="${CSS.escape(b.dataset.selectAllMove)}"]`).forEach(input => { input.checked = true; }));
     document.querySelectorAll('[data-clear-all-move]').forEach(b => b.onclick = () => document.querySelectorAll(`input[data-content-move-check][data-source-lesson="${CSS.escape(b.dataset.clearAllMove)}"]`).forEach(input => { input.checked = false; }));
@@ -1291,6 +1295,63 @@
     bindEditorForm();
   }
 
+  function materialLibraryEntries() {
+    const map = new Map();
+    catalogPackages().forEach(pkg => (pkg.lessons || []).forEach(lesson => (lesson.contents || []).forEach(content => {
+      if (content.enabled === false) return;
+      const type = clean(content.type).toUpperCase();
+      const url = clean(content.url);
+      const text = clean(content.text);
+      const key = url ? `${type}|URL|${normalize(url)}` : `${type}|TEXT|${normalize(content.title)}|${text}`;
+      if (!key || key.endsWith('|TEXT||')) return;
+      const sourceLabel = `${pkg.title}｜${visibleLessonTitle(lesson)}`;
+      if (!map.has(key)) map.set(key, { key, id: content.id, title: content.title, type, url, text, sources: [sourceLabel] });
+      else {
+        const item = map.get(key);
+        if (!item.sources.includes(sourceLabel)) item.sources.push(sourceLabel);
+      }
+    })));
+    return [...map.values()].sort((a,b) => normalize(a.title).localeCompare(normalize(b.title), 'zh-Hant'));
+  }
+
+  function openMaterialLibrary(targetLessonId = '', targetPackageId = '') {
+    if (!state.features.courseReuseV1) { showToast('後端尚未啟用快速建課功能'); return; }
+    const targetLesson = targetLessonId ? findCatalogLesson(targetLessonId) : null;
+    const targetPackage = targetPackageId ? findCatalogPackage(targetPackageId) : (targetLesson ? findCatalogPackage(targetLesson.packageId) : null);
+    if (!targetPackage) { showToast('找不到要加入教材的課程'); return; }
+    const entries = materialLibraryEntries();
+    if (!entries.length) { showToast('目前還沒有可重複使用的既有教材'); return; }
+    const rows = entries.map(item => `<label class="learner-check quick-material-row"><input type="checkbox" name="reuseContent" value="${escapeHtml(item.id)}"><span><strong>${escapeHtml(item.title)}</strong><small>${escapeHtml(contentTypeLabel(item.type))}｜使用於 ${item.sources.length} 個課程位置<br>${escapeHtml(item.sources.slice(0,2).join('、'))}${item.sources.length > 2 ? '…' : ''}</small></span></label>`).join('');
+    const targetName = targetLesson ? `${targetPackage.title}｜${visibleLessonTitle(targetLesson)}` : `${targetPackage.title}｜課程教材`;
+    showAdminEditor(`從既有教材選用｜${targetName}`, `<form id="adminEditForm" class="admin-form" data-admin-form="reuseContents"><input type="hidden" id="editReuseTargetLessonId" value="${escapeHtml(targetLessonId)}"><input type="hidden" id="editReuseTargetPackageId" value="${escapeHtml(targetLesson ? '' : targetPackage.id)}"><div class="v1-assignment-tools"><strong>既有教材</strong><div class="v1-assignment-buttons"><button class="mini-button" type="button" data-reuse-pick="visible">全選目前顯示</button><button class="mini-button" type="button" data-reuse-pick="clear">清除勾選</button></div></div><label class="field-group"><span>搜尋教材</span><input id="reuseContentSearch" type="search" placeholder="輸入教材名稱、類型或原課程"></label><div id="reuseContentSearchResult" class="v1-search-result"></div><div class="learner-checklist quick-material-list">${rows}</div><p class="form-hint">加入後會建立新的教材 ID，因此每門課的觀看／閱讀進度獨立；PDF、下載檔、YouTube 與網址仍沿用同一份來源，不重新上傳。</p><div class="form-actions"><button class="secondary-button" type="button" data-cancel-editor>取消</button><button class="primary-button" type="submit">加入選取教材</button></div></form>`);
+    bindEditorForm();
+    const search = $('reuseContentSearch');
+    const filter = () => {
+      const q = normalize(search?.value || ''); let shown = 0;
+      document.querySelectorAll('.quick-material-row').forEach(row => { const hit = !q || normalize(row.textContent).includes(q); row.hidden = !hit; if (hit) shown++; });
+      if ($('reuseContentSearchResult')) $('reuseContentSearchResult').textContent = q ? `找到 ${shown} 筆` : `共 ${entries.length} 筆可重複使用教材`;
+    };
+    if (search) search.oninput = filter; filter();
+    document.querySelectorAll('[data-reuse-pick]').forEach(button => button.onclick = () => {
+      const mode = button.dataset.reusePick;
+      document.querySelectorAll('.quick-material-row input[name="reuseContent"]').forEach(input => { input.checked = mode === 'clear' ? false : !input.closest('.quick-material-row')?.hidden; });
+    });
+  }
+
+  function openCopyLessonEditor(lesson) {
+    if (!state.features.courseReuseV1 || !lesson || lesson.title === '__PACKAGE_DIRECT__') return;
+    const targets = catalogPackages().filter(pkg => pkg.enabled !== false);
+    const sourcePackage = findCatalogPackage(lesson.packageId);
+    showAdminEditor(`複製子課程｜${lesson.title}`, `<form id="adminEditForm" class="admin-form" data-admin-form="copyLesson"><input type="hidden" id="editCopyLessonId" value="${escapeHtml(lesson.id)}"><div class="form-grid">${field('新子課程名稱', 'editCopyLessonTitle', `${lesson.title} 複本`, 'text', 'required')}<label class="field-group"><span>複製到母課程</span><select id="editCopyLessonPackage">${targets.map(pkg => `<option value="${escapeHtml(pkg.id)}" ${pkg.id === lesson.packageId ? 'selected' : ''}>${escapeHtml(pkg.title)}</option>`).join('')}</select></label></div><p class="form-hint">會複製子課程設定與教材，但建立新的子課程／教材 ID；不複製任何學習進度、作業附件或審核結果。完成後會直接開啟新子課程編輯畫面讓你微調。</p><div class="form-actions"><button class="secondary-button" type="button" data-cancel-editor>取消</button><button class="primary-button" type="submit">建立複本</button></div></form>`);
+    bindEditorForm();
+  }
+
+  function openCopyPackageEditor(pkg) {
+    if (!state.features.courseReuseV1 || !pkg) return;
+    showAdminEditor(`複製整門課程｜${pkg.title}`, `<form id="adminEditForm" class="admin-form" data-admin-form="copyPackage"><input type="hidden" id="editCopyPackageId" value="${escapeHtml(pkg.id)}"><div class="form-grid">${field('新課程名稱', 'editCopyPackageTitle', `${pkg.title} 複本`, 'text', 'required')}<label class="field-group field-group--wide"><span>簡短說明</span><textarea id="editCopyPackageDescription">${escapeHtml(pkg.description || '')}</textarea></label></div><p class="form-hint">會複製母課程、子課程、教材引用、完成規則與作業設定，新課程固定建立為「草稿」。不複製指派人員、學習紀錄、已上傳作業或審核結果。完成後會直接開啟新課程編輯畫面。</p><div class="form-actions"><button class="secondary-button" type="button" data-cancel-editor>取消</button><button class="primary-button" type="submit">建立課程複本</button></div></form>`);
+    bindEditorForm();
+  }
+
   function openMoveContentsEditor(sourceLessonId, contentIds) {
     if (!state.features.contentMoveV1) { showToast('後端尚未啟用教材移動功能'); return; }
     const source = findCatalogLesson(sourceLessonId);
@@ -1319,7 +1380,7 @@
   }
 
   function contentUploadEditorHtml() {
-    if (!state.features.contentFileUploadV116) return '<div class="manage-warning">直接上傳教材需部署 V1.1.6 後端；目前仍可貼 Google Drive / 網址。</div>';
+    if (!state.features.contentFileUploadV116) return '<div class="manage-warning">直接上傳教材需部署 V1.0 後端；目前仍可貼 Google Drive / 網址。</div>';
     const maxMb = n(state.uploadConfig.maxMb || 20);
     return `<label id="editContentFileGroup" class="field-group field-group--wide"><span>或直接上傳檔案</span><input id="editContentFile" type="file"><small>PDF 或下載檔可直接選檔；單檔最多 ${maxMb} MB。母課程與子課程使用同一套流程。</small></label>`;
   }
@@ -1398,7 +1459,7 @@
   function optionalNumber(id) { const value = clean($(id)?.value); return value === '' ? null : Number(value); }
 
   async function saveAdminAction(action, payload) {
-    const timeout = action === 'saveContent' && payload?.fileBase64 ? 90000 : action === 'moveContentsToLesson' ? 90000 : 15000;
+    const timeout = action === 'saveContent' && payload?.fileBase64 ? 90000 : ['moveContentsToLesson','reuseContents','copyLesson','copyPackage'].includes(action) ? 120000 : 15000;
     const data = await api(action, payload, state.token, { timeout });
     if (data?.catalog) { state.adminCatalog = data.catalog; state.adminCatalogLoaded = true; }
     if (Array.isArray(data?.overview)) { state.adminOverview = data.overview; state.overviewDirty = false; }
@@ -1419,6 +1480,24 @@
       if (kind === 'package') {
         action = 'savePackage';
         payload = { id: $('editId').value, title: $('editTitle').value, description: $('editDescription').value, sort: Number($('editSort').value), enabled: boolValue('editEnabled'), publishState: $('editPublishState').value, completionRule: $('editCompletionRule')?.value || '所有必修子課程完成' };
+      } else if (kind === 'reuseContents') {
+        action = 'reuseContents';
+        const contentIds = [...document.querySelectorAll('input[name="reuseContent"]:checked')].map(x => x.value);
+        const targetLessonId = $('editReuseTargetLessonId').value;
+        const targetPackageId = $('editReuseTargetPackageId').value;
+        if (!contentIds.length) throw new Error('請至少勾選一筆教材');
+        payload = { contentIds, targetLessonId, targetPackageId };
+        if (targetLessonId) {
+          const lesson = findCatalogLesson(targetLessonId);
+          if (lesson) { state.manageOpenPackages.add(lesson.packageId); state.manageOpenLessons.add(targetLessonId); }
+        } else if (targetPackageId) state.manageOpenPackages.add(targetPackageId);
+      } else if (kind === 'copyLesson') {
+        action = 'copyLesson';
+        payload = { sourceLessonId: $('editCopyLessonId').value, targetPackageId: $('editCopyLessonPackage').value, title: $('editCopyLessonTitle').value };
+        state.manageOpenPackages.add(payload.targetPackageId);
+      } else if (kind === 'copyPackage') {
+        action = 'copyPackage';
+        payload = { sourcePackageId: $('editCopyPackageId').value, title: $('editCopyPackageTitle').value, description: $('editCopyPackageDescription').value };
       } else if (kind === 'moveContents') {
         action = 'moveContentsToLesson';
         const sourceLessonId = $('editMoveSourceLessonId').value;
@@ -1476,6 +1555,18 @@
       }
       closeAdminEditor();
       saveFoldState();
+      if (kind === 'copyLesson' && data?.createdLessonId) {
+        const copiedLesson = findCatalogLesson(data.createdLessonId);
+        if (copiedLesson) { state.manageOpenPackages.add(copiedLesson.packageId); state.manageOpenLessons.add(copiedLesson.id); saveFoldState(); renderAdminManage(); openLessonEditor(copiedLesson); }
+        showToast(data?.message || '子課程已複製');
+        return;
+      }
+      if (kind === 'copyPackage' && data?.createdPackageId) {
+        const copiedPackage = findCatalogPackage(data.createdPackageId);
+        if (copiedPackage) { state.manageOpenPackages.add(copiedPackage.id); saveFoldState(); renderAdminManage(); openPackageEditor(copiedPackage); }
+        showToast(data?.message || '課程已複製');
+        return;
+      }
       showToast(data?.message || '已儲存');
     } catch (error) {
       setButtonBusy(button, false);
