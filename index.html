@@ -39,7 +39,7 @@
         <div class="card-heading"><p class="step-label">登入</p><h2 id="loginTitle">帳號＋密碼登入</h2></div>
         <form id="loginForm" novalidate>
           <label class="field-group"><span>帳號</span><input id="employeeId" name="employeeId" type="text" autocomplete="username" placeholder="請輸入帳號" required></label>
-          <label class="field-group"><span>密碼</span><div class="password-wrap"><input id="password" name="password" type="password" inputmode="numeric" autocomplete="current-password" maxlength="4" placeholder="4 碼數字" required><button id="togglePassword" class="icon-button" type="button" aria-label="顯示密碼">顯示</button></div></label>
+          <label class="field-group"><span>密碼</span><div class="password-wrap"><input id="password" name="password" type="password" inputmode="text" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="4" placeholder="4 碼英數" required><button id="togglePassword" class="icon-button" type="button" aria-label="顯示密碼">顯示</button></div></label>
           <div id="loginMessage" class="form-message form-message--error" role="alert" hidden></div>
           <button id="loginButton" class="primary-button" type="submit">登入</button>
         </form>
