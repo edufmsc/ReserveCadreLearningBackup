@@ -21,6 +21,9 @@
     "moveLesson",
     "moveContent",
     "moveContentsToLesson",
+    "reuseContents",
+    "copyLesson",
+    "copyPackage",
     "exportProgress",
     "saveProgress",
     "completeLesson",
@@ -49,6 +52,7 @@
     "batchUploadV114": true,
     "contentFileUploadV116": true,
     "packageDirectSubmissionV116": true,
-    "contentMoveV1": true
+    "contentMoveV1": true,
+    "courseReuseV1": true
   }
 }
