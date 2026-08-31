@@ -7,7 +7,11 @@
     "logout",
     "bootstrap",
     "studentPackages",
+    "studentHome",
+    "studentLesson",
     "adminOverview",
+    "adminTracking",
+    "adminTrackingDetail",
     "adminCatalog",
     "savePackage",
     "saveLesson",
@@ -53,6 +57,10 @@
     "contentFileUploadV116": true,
     "packageDirectSubmissionV116": true,
     "contentMoveV1": true,
-    "courseReuseV1": true
+    "courseReuseV1": true,
+    "fastPathV1": true,
+    "loginRetryV1": true,
+    "splitReadV1": true,
+    "warmSnapshotV1": true
   }
 }
