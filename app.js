@@ -73,13 +73,13 @@
     return !!(window.LEARNING_CONFIG && /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:\?.*)?$/i.test(clean(window.LEARNING_CONFIG.API_URL)));
   }
 
-  const SAFE_RETRY_ACTIONS = new Set(['health','bootstrap','studentPackages','adminOverview','adminCatalog','getSubmission','adminSubmissions','getPdfContent','exportProgress']);
+  const SAFE_RETRY_ACTIONS = new Set(['health','bootstrap','studentPackages','studentHome','studentLesson','adminOverview','adminTracking','adminTrackingDetail','adminCatalog','getSubmission','adminSubmissions','getPdfContent','exportProgress']);
 
   function actionTimeout(action) {
     if (action === 'health') return 12000;
     if (action === 'bootstrap') return 12000;
     if (action === 'login') return 18000;
-    if (['studentPackages','adminOverview','adminCatalog','getSubmission','adminSubmissions','exportProgress'].includes(action)) return 12000;
+    if (['studentPackages','studentHome','studentLesson','adminOverview','adminTracking','adminTrackingDetail','adminCatalog','getSubmission','adminSubmissions','exportProgress'].includes(action)) return 12000;
     return 20000;
   }
 
@@ -224,7 +224,11 @@
   }
 
   function contentTypes(lesson) {
-    const types = [...new Set((lesson.contents || []).filter(c => c.enabled !== false).map(c => contentTypeLabel(c.type)))];
+    if (Array.isArray(lesson?.contentTypes)) {
+      const types = [...new Set(lesson.contentTypes.map(contentTypeLabel).filter(Boolean))];
+      return types.join('＋') || (n(lesson.contentCount) ? '教材' : '無教材');
+    }
+    const types = [...new Set((lesson?.contents || []).filter(c => c.enabled !== false).map(c => contentTypeLabel(c.type)))];
     return types.join('＋') || '教材';
   }
 
@@ -402,7 +406,8 @@
     if (state.user?.roleKey === 'admin') return;
     if (!force && state.studentPackagesLoaded) return;
     if (state.studentPackagesLoading) return state.studentPackagesLoading;
-    const task = api('studentPackages', {}, state.token, { retry: true, timeout: 12000 })
+    const action = state.features.splitReadV1 ? 'studentHome' : 'studentPackages';
+    const task = api(action, {}, state.token, { retry: true, timeout: 12000 })
       .then(data => {
         const packages = Array.isArray(data) ? data : (Array.isArray(data?.packages) ? data.packages : []);
         state.packages = packages;
@@ -445,7 +450,18 @@
   async function login(account, password) {
     const generation = ++state.authGeneration;
     clearViewState();
-    const data = await api('login', { employeeId: account, password }, '', { timeout: 18000 });
+    const requestId = `L${Date.now().toString(36)}${Math.random().toString(36).slice(2,10)}`;
+    const payload = { employeeId: account, password, requestId };
+    let data;
+    try {
+      data = await api('login', payload, '', { timeout: 18000, retry: false });
+    } catch (error) {
+      const canRetry = !!state.features.loginRetryV1 && ['TIMEOUT','NETWORK_ERROR','NON_JSON_RESPONSE'].includes(error?.code || '');
+      if (!canRetry || generation !== state.authGeneration) throw error;
+      setModeBadge('checking', '後端正在啟動｜自動續登入');
+      await new Promise(resolve => setTimeout(resolve, 700));
+      data = await api('login', payload, '', { timeout: 22000, retry: false });
+    }
     if (generation !== state.authGeneration) {
       if (data?.sessionToken) api('logout', {}, data.sessionToken, { timeout: 5000, retry: false }).catch(() => {});
       return false;
@@ -505,7 +521,7 @@
       restoreScroll(saved.scrollY);
       return;
     }
-    state.studentTab = saved.studentTab === 'records' ? 'records' : 'courses';
+    state.studentTab = ['records','report'].includes(saved.studentTab) ? saved.studentTab : 'courses';
     if (saved.view === 'lesson' && saved.activePackageId && saved.activeLessonId) {
       const found = findStudentLesson(saved.activePackageId, saved.activeLessonId);
       if (found.pkg && found.lesson) {
@@ -604,9 +620,36 @@
     return { pkg, lesson: pkg?.lessons?.find(x => x.id === lessonId) || null };
   }
 
+  async function ensureStudentLessonDetail(packageId, lessonId) {
+    let found = findStudentLesson(packageId, lessonId);
+    if (!state.features.splitReadV1 || found.lesson?.detailLoaded !== false) return found;
+    const data = await api('studentLesson', { lessonId }, state.token, { retry: true, timeout: 12000 });
+    const detail = data?.lesson;
+    if (!detail?.id) throw new Error('教材資料格式不完整');
+    const pkg = state.packages.find(x => x.id === (data.packageId || packageId));
+    if (!pkg) throw new Error('找不到課程');
+    const position = (pkg.lessons || []).findIndex(x => x.id === detail.id);
+    if (position < 0) throw new Error('找不到子課程');
+    pkg.lessons[position] = { ...pkg.lessons[position], ...detail, detailLoaded: true };
+    return { pkg, lesson: pkg.lessons[position] };
+  }
+
   async function openLesson(packageId, lessonId) {
     let { pkg, lesson } = findStudentLesson(packageId, lessonId);
     if (!pkg || !lesson) return;
+    if (state.features.splitReadV1 && lesson.detailLoaded === false) {
+      state.activePackageId = packageId;
+      state.activeLessonId = lessonId;
+      $('studentDashboard').hidden = true;
+      $('adminDashboard').hidden = true;
+      $('lessonPage').hidden = false;
+      $('lessonPackageName').textContent = pkg.title;
+      $('lessonTitle').textContent = visibleLessonTitle(lesson);
+      $('lessonMeta').innerHTML = '';
+      $('lessonContent').innerHTML = '<div class="empty-state"><h3>正在載入教材…</h3><p>先載入需要的這一堂，不下載其他課程教材。</p></div>';
+      try { ({ pkg, lesson } = await ensureStudentLessonDetail(packageId, lessonId)); }
+      catch (error) { $('lessonPage').hidden = true; $('studentDashboard').hidden = false; showToast(error.message || '教材載入失敗'); return; }
+    }
     state.activePackageId = packageId;
     state.activeLessonId = lessonId;
     state.previewMode = false;
@@ -1052,7 +1095,8 @@
     const panel = state.adminTab === 'courses' ? $('adminCoursesPanel') : $('adminPeoplePanel');
     if (panel) panel.innerHTML = '<div class="empty-state"><h3>更新學習紀錄中…</h3></div>';
     try {
-      const data = await api('adminOverview', {}, state.token, { retry: true, timeout: 12000 });
+      const action = state.features.splitReadV1 ? 'adminTracking' : 'adminOverview';
+      const data = await api(action, {}, state.token, { retry: true, timeout: 12000 });
       state.adminOverview = Array.isArray(data.overview) ? data.overview : [];
       state.overviewDirty = false;
       renderAdmin();
@@ -1072,15 +1116,54 @@
     bindAdminAccordions($('adminPeoplePanel'));
     document.querySelectorAll('[data-force-complete]').forEach(button => button.onclick = () => forceCompletePackage(button));
     document.querySelectorAll('[data-clear-force-complete]').forEach(button => button.onclick = () => clearForceCompletePackage(button));
+    $('adminPeoplePanel')?.querySelectorAll('[data-admin-tracking-detail]').forEach(button => button.onclick = () => toggleAdminTrackingDetail(button));
+  }
+
+  async function ensureAdminTrackingDetail(employeeId, packageId) {
+    const person = (state.adminOverview || []).find(x => clean(x.employeeId) === clean(employeeId));
+    let pkg = (person?.packages || []).find(x => clean(x.id) === clean(packageId));
+    if (!state.features.splitReadV1 || Array.isArray(pkg?.lessons)) return { person, pkg };
+    const data = await api('adminTrackingDetail', { employeeId, packageId }, state.token, { retry: true, timeout: 12000 });
+    if (!data?.package) throw new Error('找不到課程細項');
+    if (person) {
+      const position = (person.packages || []).findIndex(x => clean(x.id) === clean(packageId));
+      if (position >= 0) person.packages[position] = { ...person.packages[position], ...data.package };
+      pkg = person.packages[position];
+    } else pkg = data.package;
+    return { person, pkg };
+  }
+
+  function adminPackageDetailHtml(pkg) {
+    if (!pkg) return '<div class="manage-empty">找不到課程細項</div>';
+    const summary = packageSummary(pkg);
+    const forcedMeta = pkg.forcedComplete ? `<div class="force-complete-note">教育中心人工通過${pkg.forcedAt ? `｜${escapeHtml(pkg.forcedAt)}` : ''}${pkg.forcedBy ? `｜${escapeHtml(pkg.forcedBy)}` : ''}${pkg.forcedNote ? `<br>${escapeHtml(pkg.forcedNote)}` : ''}</div>` : '';
+    const lessons = (pkg.lessons || []).map(lesson => `<div class="admin-lesson-row"><strong>${escapeHtml(visibleLessonTitle(lesson))}</strong>${statusTag(lesson.status)}<span class="admin-lesson-meta">影片 ${formatSeconds(lesson.videoSeconds)}｜PDF ${formatSeconds(lesson.pdfSeconds)}｜完成 ${formatDateTime(lesson.completedAt)}</span></div>`).join('');
+    return forcedMeta + (lessons || `<div class="manage-empty">${summary.status === 'complete' ? '此課程已完成' : '此課程沒有子課程明細'}</div>`);
+  }
+
+  async function toggleAdminTrackingDetail(button) {
+    const row = button.closest('.person-package');
+    const body = row?.querySelector(':scope > .person-package__body');
+    if (!body) return;
+    if (!body.hidden) { body.hidden = true; button.classList.remove('is-open'); return; }
+    if (body.dataset.loaded !== '1') {
+      body.innerHTML = '<div class="manage-empty">正在載入細項…</div>';
+      body.hidden = false;
+      try {
+        const { pkg } = await ensureAdminTrackingDetail(button.dataset.employeeId, button.dataset.packageId);
+        body.innerHTML = adminPackageDetailHtml(pkg);
+        body.dataset.loaded = '1';
+      } catch (error) { body.innerHTML = `<div class="manage-empty">${escapeHtml(error.message || '細項載入失敗')}</div>`; }
+    } else body.hidden = false;
+    button.classList.add('is-open');
   }
 
   function renderAdminPersonPackage(person, pkg) {
     const summary = packageSummary(pkg);
-    const lessons = (pkg.lessons || []).map(lesson => `<div class="admin-lesson-row"><strong>${escapeHtml(visibleLessonTitle(lesson))}</strong>${statusTag(lesson.status)}<span class="admin-lesson-meta">影片 ${formatSeconds(lesson.videoSeconds)}｜PDF ${formatSeconds(lesson.pdfSeconds)}｜完成 ${formatDateTime(lesson.completedAt)}</span></div>`).join('');
     const force = state.features.forceComplete && !pkg.forcedComplete && summary.status !== 'complete' ? `<button class="mini-button v1-force-button" type="button" data-force-complete data-employee-id="${escapeHtml(person.employeeId)}" data-package-id="${escapeHtml(pkg.id)}">強制通過</button>` : '';
     const clearForce = state.features.forceComplete && pkg.forcedComplete ? `<button class="mini-button" type="button" data-clear-force-complete data-employee-id="${escapeHtml(person.employeeId)}" data-package-id="${escapeHtml(pkg.id)}">取消強制通過</button>` : '';
-    const forcedMeta = pkg.forcedComplete ? `<div class="force-complete-note">教育中心人工通過${pkg.forcedAt ? `｜${escapeHtml(pkg.forcedAt)}` : ''}${pkg.forcedBy ? `｜${escapeHtml(pkg.forcedBy)}` : ''}${pkg.forcedNote ? `<br>${escapeHtml(pkg.forcedNote)}` : ''}</div>` : '';
-    return `<div class="person-package"><div class="person-package__head"><button class="person-package__toggle" type="button"><span><strong>${escapeHtml(pkg.title)}</strong><small>${pkg.forcedComplete ? `人工通過｜原實際進度 ${summary.done}/${summary.total}` : `${summary.done}/${summary.total} 完成`}</small></span>${statusTag(summary.status)}</button><div class="person-package__quick-actions">${force}${clearForce}</div></div><div class="person-package__body" hidden>${forcedMeta}${lessons}</div></div>`;
+    const alreadyDetailed = Array.isArray(pkg.lessons);
+    return `<div class="person-package"><div class="person-package__head"><button class="person-package__toggle" type="button" data-admin-tracking-detail data-employee-id="${escapeHtml(person.employeeId)}" data-package-id="${escapeHtml(pkg.id)}"><span><strong>${escapeHtml(pkg.title)}</strong><small>${pkg.forcedComplete ? `人工通過｜原實際進度 ${summary.done}/${summary.total}` : `${summary.done}/${summary.total} 完成`}</small></span>${statusTag(summary.status)}</button><div class="person-package__quick-actions">${force}${clearForce}</div></div><div class="person-package__body" ${alreadyDetailed ? 'data-loaded="1"' : ''} hidden>${alreadyDetailed ? adminPackageDetailHtml(pkg) : ''}</div></div>`;
   }
 
   function uniquePackagesForAdmin() {
@@ -1101,20 +1184,23 @@
     return status === 'not_started' ? 0 : status === 'in_progress' ? 1 : status === 'complete' ? 2 : 9;
   }
 
-  function renderAdminCoursePersonDetails(button) {
+  async function renderAdminCoursePersonDetails(button) {
     const employeeId = clean(button.dataset.coursePerson);
     const packageId = clean(button.dataset.coursePackage);
     const row = button.closest('.person-package');
     const body = row?.querySelector(':scope > .person-package__body');
     if (!body) return;
+    if (!body.hidden) { body.hidden = true; button.classList.remove('is-open'); return; }
     if (body.dataset.loaded !== '1') {
-      const person = (state.adminOverview || []).find(x => clean(x.employeeId) === employeeId);
-      const pkg = (person?.packages || []).find(x => clean(x.id) === packageId);
-      body.innerHTML = pkg ? (pkg.lessons || []).map(lesson => `<div class="admin-lesson-row"><strong>${escapeHtml(visibleLessonTitle(lesson))}</strong>${statusTag(lesson.status)}<span class="admin-lesson-meta">影片 ${formatSeconds(lesson.videoSeconds)}｜PDF ${formatSeconds(lesson.pdfSeconds)}｜完成 ${formatDateTime(lesson.completedAt)}</span></div>`).join('') || '<div class="manage-empty">此課程沒有子課程明細</div>' : '<div class="manage-empty">找不到課程明細</div>';
-      body.dataset.loaded = '1';
-    }
-    body.hidden = !body.hidden;
-    button.classList.toggle('is-open', !body.hidden);
+      body.innerHTML = '<div class="manage-empty">正在載入細項…</div>';
+      body.hidden = false;
+      try {
+        const { pkg } = await ensureAdminTrackingDetail(employeeId, packageId);
+        body.innerHTML = adminPackageDetailHtml(pkg);
+        body.dataset.loaded = '1';
+      } catch (error) { body.innerHTML = `<div class="manage-empty">${escapeHtml(error.message || '細項載入失敗')}</div>`; }
+    } else body.hidden = false;
+    button.classList.add('is-open');
   }
 
   function bindAdminCourseViewEvents() {
@@ -1180,7 +1266,7 @@
         button.classList.toggle('is-open', !content.hidden);
       };
     });
-    root?.querySelectorAll('.person-package__toggle').forEach(button => {
+    root?.querySelectorAll('.person-package__toggle:not([data-admin-tracking-detail]):not([data-course-person])').forEach(button => {
       button.onclick = () => {
         const body = button.closest('.person-package')?.querySelector(':scope > .person-package__body');
         if (body) body.hidden = !body.hidden;
@@ -2005,6 +2091,11 @@
     document.querySelectorAll('[data-student-tab]').forEach(button => button.classList.toggle('is-active', button.dataset.studentTab === tab));
     $('studentCoursesPanel').hidden = tab !== 'courses';
     $('studentRecordsPanel').hidden = tab !== 'records';
+    if ($('studentReportPanel')) $('studentReportPanel').hidden = tab !== 'report';
+    if (tab === 'report') {
+      const frame = $('recordReportFrame');
+      if (frame && !frame.dataset.loaded) { frame.src = frame.dataset.src || frame.src; frame.dataset.loaded = '1'; }
+    }
     state.studentTab = tab;
     if (tab === 'courses' && state.features.lazyDataV114 && !state.studentPackagesLoaded) {
       ensureStudentPackages().catch(error => showToast(error.message || '課程載入失敗'));
@@ -2032,7 +2123,7 @@
       $('loginMessage').hidden = true;
       const button = $('loginButton'); setButtonBusy(button, true, '登入中…');
       try { await login(clean($('employeeId').value), clean($('password').value)); }
-      catch (error) { state.token = ''; if (isSessionExpiredError(error)) clearSession(); $('loginMessage').textContent = error?.code === 'TIMEOUT' ? '後端正在啟動或回應較慢，請稍候再按一次登入；不需要重新整理頁面。' : (error.message || '登入失敗'); $('loginMessage').hidden = false; }
+      catch (error) { state.token = ''; if (isSessionExpiredError(error)) clearSession(); $('loginMessage').textContent = error?.code === 'TIMEOUT' ? '後端本次啟動超過等待時間，請稍候再試。' : (error.message || '登入失敗'); $('loginMessage').hidden = false; }
       finally { setButtonBusy(button, false); }
     });
     $('togglePassword').onclick = () => { const input = $('password'); input.type = input.type === 'password' ? 'text' : 'password'; $('togglePassword').textContent = input.type === 'password' ? '顯示' : '隱藏'; };

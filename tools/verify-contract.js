@@ -27,7 +27,7 @@ const missingFeatures = [...referencedFeatures].filter(name => contract.features
 if (missingFeatures.length) fail(`Apps Script contract missing frontend feature flags: ${missingFeatures.join(', ')}`);
 
 const criticalActions = [
-  'health','login','logout','bootstrap','studentPackages','adminOverview','adminCatalog',
+  'health','login','logout','bootstrap','studentPackages','studentHome','studentLesson','adminOverview','adminTracking','adminTrackingDetail','adminCatalog',
   'savePackage','saveLesson','saveContent','saveAssignment','saveAssignmentsBatch',
   'setPackageState','deletePackage','deleteLesson','deleteContent','moveLesson','moveContent','moveContentsToLesson','reuseContents','copyLesson','copyPackage',
   'exportProgress','saveProgress','completeLesson','getPdfContent','getSubmission',
@@ -37,7 +37,7 @@ const criticalActions = [
 for (const action of criticalActions) {
   if (!supportedActions.has(action)) fail(`Required Apps Script action missing from contract: ${action}`);
 }
-for (const feature of ['lazyDataV114','batchUploadV114','contentFileUploadV116','submissions','forceComplete','packageDirectSubmissionV116','contentMoveV1','courseReuseV1']) {
+for (const feature of ['lazyDataV114','batchUploadV114','contentFileUploadV116','submissions','forceComplete','packageDirectSubmissionV116','contentMoveV1','courseReuseV1','fastPathV1','loginRetryV1','splitReadV1','warmSnapshotV1']) {
   if (contract.features?.[feature] !== true) fail(`Required Apps Script feature missing from contract: ${feature}`);
 }
 if (contract.build !== 'V1.0') fail(`Unexpected backend build id: ${contract.build}`);

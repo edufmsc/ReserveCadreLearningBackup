@@ -57,10 +57,10 @@
           <nav class="tab-bar" aria-label="學員功能"><button class="tab-button is-active" data-student-tab="courses" type="button">我的課程</button><button class="tab-button" data-student-tab="records" type="button">學習紀錄</button><button class="tab-button" data-student-tab="report" type="button">紀錄回報</button></nav>
           <section id="studentCoursesPanel" class="tab-panel"><div id="studentSummary" class="summary-grid"></div><div class="panel-heading"><div><h2>我的課程</h2></div></div><div id="packageList" class="package-list"></div></section>
           <section id="studentRecordsPanel" class="tab-panel" hidden><div class="panel-heading"><div><h2>學習紀錄</h2></div></div><div id="studentRecordsList" class="record-list"></div></section>
-          <section id="studentReportPanel" class="tab-panel" aria-label="紀錄回報">
+          <section id="studentReportPanel" class="tab-panel" aria-label="紀錄回報" hidden>
             <article class="report-panel-card">
               <div class="report-panel-head"><div><p class="step-label">紀錄回報</p><h2>實際錄用紀錄回報</h2><p>每完成一位實際錄用請填寫一筆；送出後可立即繼續回報下一筆。</p></div><div class="report-panel-actions"><button id="resetRecordReportButton" class="secondary-button primary-button--fit" type="button">填寫下一筆</button><a class="secondary-button primary-button--fit" href="https://forms.gle/rSCuspJrPx5YmKAp7" target="_blank" rel="noopener">另開問卷</a></div></div>
-              <div class="report-frame-wrap"><iframe id="recordReportFrame" class="report-frame" title="實際錄用紀錄回報問卷" src="https://forms.gle/rSCuspJrPx5YmKAp7" loading="lazy" referrerpolicy="strict-origin-when-cross-origin">正在載入問卷…</iframe></div>
+              <div class="report-frame-wrap"><iframe id="recordReportFrame" class="report-frame" title="實際錄用紀錄回報問卷" src="about:blank" data-src="https://forms.gle/rSCuspJrPx5YmKAp7" loading="lazy" referrerpolicy="strict-origin-when-cross-origin">正在載入問卷…</iframe></div>
               <p class="report-panel-note">若剛送出一筆要繼續填寫，請按「填寫下一筆」重新載入空白問卷；若裝置無法顯示內嵌問卷，可使用「另開問卷」。</p>
             </article>
           </section>
@@ -81,7 +81,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="api_config.js?v=1.0"></script>
-  <script src="app.js?v=1.0-adminfilter-20260828"></script>
+  <script src="app.js?v=1.0-fastpath-20260831"></script>
   <script>
     (() => {
       const FORM_URL = 'https://forms.gle/rSCuspJrPx5YmKAp7';
@@ -94,6 +94,7 @@
         frame.src = 'about:blank';
         window.setTimeout(() => {
           frame.src = FORM_URL;
+          frame.dataset.loaded = '1';
           button.disabled = false;
           button.textContent = '填寫下一筆';
           frame.scrollIntoView({ behavior: 'smooth', block: 'start' });
