@@ -1,0 +1,37 @@
+name: V1.0 fast path patch
+
+on:
+  push:
+    branches:
+      - perf/v1-fast-path
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: perf/v1-fast-path
+      - name: Apply Fast Path patch
+        run: python tools/patch-v1-fast-path.py
+      - name: Verify Fast Path frontend
+        run: |
+          node --check app.js
+          node tools/verify-contract.js
+          grep -F "studentHome" app.js
+          grep -F "studentLesson" app.js
+          grep -F "adminTrackingDetail" app.js
+          grep -F "loginRetryV1" app.js
+          grep -F "data-src=\"https://forms.gle/rSCuspJrPx5YmKAp7\"" index.html
+          grep -F "app.js?v=1.0-fastpath-20260831" index.html
+      - name: Commit verified Fast Path
+        run: |
+          if git diff --quiet; then exit 0; fi
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add app.js index.html apps-script/contract.json tools/verify-contract.js
+          git commit -m 'perf: add V1.0 fast path data loading'
+          git push origin HEAD:perf/v1-fast-path
