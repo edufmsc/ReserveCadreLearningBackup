@@ -21,9 +21,9 @@ jobs:
         run: |
           node --check app.js
           node tools/verify-contract.js
-          grep -F "指定 ${info.valid.length} 人" app.js
-          grep -F "applicabilitySelectionSummary" app.js
-          grep -F "app.js?v=1.0-applicability-20260906" index.html
+          grep -F 'applicabilityInfo(lesson)' app.js
+          grep -F 'applicabilitySelectionSummary' app.js
+          grep -F 'app.js?v=1.0-applicability-20260906' index.html
       - name: Commit verified patch
         run: |
           if git diff --quiet; then exit 0; fi
