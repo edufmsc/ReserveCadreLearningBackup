@@ -66,12 +66,10 @@ rep("""    const mode = $('editApplicabilityMode'), picker = $('applicabilityPic
     document.querySelectorAll('input[name=\"applicableLearner\"]').forEach(input => input.addEventListener('change', refreshSelectionSummary));
     if (search) {""",'editor selection summary binding')
 
-# Ensure initial summary is rendered after search/filter setup.
 rep("""      search.oninput = filter; filter();""","""      search.oninput = filter; filter(); refreshSelectionSummary();""",'initial selection summary')
 
 p.write_text(s,encoding='utf-8')
 
-# cache bust only; visible version remains V1.0
 ip=Path('index.html')
 html=ip.read_text(encoding='utf-8')
 old='app.js?v=1.0-fastpath-20260831'
@@ -79,3 +77,5 @@ new='app.js?v=1.0-applicability-20260906'
 if old not in html:
     raise SystemExit('cache bust target not found')
 ip.write_text(html.replace(old,new,1),encoding='utf-8')
+
+# retrigger
