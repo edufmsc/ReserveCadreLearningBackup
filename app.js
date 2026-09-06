@@ -1282,9 +1282,21 @@
 
   function adminEnabledText(enabled) { return enabled === false ? '停用' : '啟用'; }
   function ruleText(lesson) { return lesson.videoPassPercent != null ? `影片達 ${n(lesson.videoPassPercent)}%` : '完成確認'; }
+  function applicabilityInfo(lesson) {
+    const ids = Array.isArray(lesson?.applicableIds) ? [...new Set(lesson.applicableIds.map(clean).filter(Boolean))] : [];
+    const learners = new Map(catalogLearners().map(x => [clean(x.employeeId), x]));
+    return {
+      valid: ids.map(id => learners.get(id)).filter(Boolean),
+      invalid: ids.filter(id => !learners.has(id))
+    };
+  }
+
   function applicabilityLabel(lesson) {
     const mode = lesson?.applicabilityMode || '全部適用';
-    if (mode === '指定帳號') return `指定 ${Array.isArray(lesson.applicableIds) ? lesson.applicableIds.length : 0} 個帳號`;
+    if (mode === '指定帳號') {
+      const info = applicabilityInfo(lesson);
+      return info.invalid.length ? `指定 ${info.valid.length} 人｜⚠ ${info.invalid.length} 筆失效` : `指定 ${info.valid.length} 人`;
+    }
     if (mode === '其餘未指定') return '其餘未指定帳號';
     return '全部適用';
   }
@@ -1431,17 +1443,28 @@
 
   function openLessonEditor(lesson, packageId) {
     lesson = lesson || { packageId, title: '', required: true, enabled: true, sort: normalLessons(findCatalogPackage(packageId)).length + 1, videoPassPercent: null, submissionMode: '不需要', submissionNote: '', applicabilityMode: '全部適用', applicableIds: [] };
-    const selected = new Set(Array.isArray(lesson.applicableIds) ? lesson.applicableIds : []);
+    const selected = new Set(Array.isArray(lesson.applicableIds) ? lesson.applicableIds.map(clean).filter(Boolean) : []);
     const learners = catalogLearners();
-    const learnerRows = learners.map(l => `<label class="learner-check applicability-learner"><input type="checkbox" name="applicableLearner" value="${escapeHtml(l.employeeId)}" ${selected.has(l.employeeId) ? 'checked' : ''}><span><strong>${escapeHtml(l.name)}｜${escapeHtml(l.employeeId)}</strong><small>${escapeHtml(l.store || '')}｜${escapeHtml(l.role || '')}</small></span></label>`).join('');
-    showAdminEditor(lesson.id ? '編輯子課程' : '新增子課程', `<form id="adminEditForm" class="admin-form" data-admin-form="lesson"><input type="hidden" id="editId" value="${escapeHtml(lesson.id || '')}"><input type="hidden" id="editPackageId" value="${escapeHtml(lesson.packageId || packageId || '')}"><div class="form-grid">${field('子課程名稱', 'editTitle', lesson.title, 'text', 'required')}${field('排序', 'editSort', lesson.sort || 1, 'number', 'min="1" required')}<label class="field-group"><span>必修</span><select id="editRequired">${yesNoSelect(lesson.required)}</select></label><label class="field-group"><span>啟用</span><select id="editEnabled">${yesNoSelect(lesson.enabled)}</select></label>${field('影片最低完成率 %', 'editVideo', lesson.videoPassPercent ?? '', 'number', 'min="1" max="100"')}<label class="field-group"><span>作業回傳</span><select id="editSubmissionMode"><option value="不需要" ${lesson.submissionMode === '不需要' ? 'selected' : ''}>不需要</option><option value="選填" ${lesson.submissionMode === '選填' ? 'selected' : ''}>選填</option><option value="必繳審核" ${lesson.submissionMode === '必繳審核' ? 'selected' : ''}>必繳並審核</option></select></label><label class="field-group field-group--wide"><span>適用對象</span><select id="editApplicabilityMode"><option value="全部適用" ${lesson.applicabilityMode !== '指定帳號' && lesson.applicabilityMode !== '其餘未指定' ? 'selected' : ''}>全部適用（一般課程使用）</option><option value="指定帳號" ${lesson.applicabilityMode === '指定帳號' ? 'selected' : ''}>指定門市／帳號</option><option value="其餘未指定" ${lesson.applicabilityMode === '其餘未指定' ? 'selected' : ''}>其餘未指定門市／帳號</option></select></label><div id="applicabilityPicker" class="field-group field-group--wide applicability-picker"><span>指定門市／帳號</span><input id="applicabilitySearch" type="search" placeholder="搜尋帳號、姓名或店別"><div id="applicabilitySearchResult" class="v1-search-result"></div><div class="learner-checklist applicability-list">${learnerRows || '<div class="manage-empty">目前沒有可選帳號</div>'}</div></div><label class="field-group field-group--wide"><span>作業說明</span><textarea id="editSubmissionNote" placeholder="例如：請下載檢核表填寫後回傳。">${escapeHtml(lesson.submissionNote || '')}</textarea></label></div><p class="form-hint">分流課程只需把特殊門市設成「指定門市／帳號」，一般門市那堂設成「其餘未指定」；一般課程維持「全部適用」即可。發布時系統會檢查重複分流。</p><div class="form-actions"><button class="secondary-button" type="button" data-cancel-editor>取消</button><button class="primary-button" type="submit">儲存</button></div></form>`);
+    const learnerIds = new Set(learners.map(l => clean(l.employeeId)));
+    const invalidSelected = [...selected].filter(id => !learnerIds.has(id));
+    const learnerRows = learners.map(l => `<label class="learner-check applicability-learner"><input type="checkbox" name="applicableLearner" value="${escapeHtml(l.employeeId)}" ${selected.has(clean(l.employeeId)) ? 'checked' : ''}><span><strong>${escapeHtml(l.name)}｜${escapeHtml(l.employeeId)}</strong><small>${escapeHtml(l.store || '')}｜${escapeHtml(l.role || '')}</small></span></label>`).join('');
+    showAdminEditor(lesson.id ? '編輯子課程' : '新增子課程', `<form id="adminEditForm" class="admin-form" data-admin-form="lesson"><input type="hidden" id="editId" value="${escapeHtml(lesson.id || '')}"><input type="hidden" id="editPackageId" value="${escapeHtml(lesson.packageId || packageId || '')}"><div class="form-grid">${field('子課程名稱', 'editTitle', lesson.title, 'text', 'required')}${field('排序', 'editSort', lesson.sort || 1, 'number', 'min="1" required')}<label class="field-group"><span>必修</span><select id="editRequired">${yesNoSelect(lesson.required)}</select></label><label class="field-group"><span>啟用</span><select id="editEnabled">${yesNoSelect(lesson.enabled)}</select></label>${field('影片最低完成率 %', 'editVideo', lesson.videoPassPercent ?? '', 'number', 'min="1" max="100"')}<label class="field-group"><span>作業回傳</span><select id="editSubmissionMode"><option value="不需要" ${lesson.submissionMode === '不需要' ? 'selected' : ''}>不需要</option><option value="選填" ${lesson.submissionMode === '選填' ? 'selected' : ''}>選填</option><option value="必繳審核" ${lesson.submissionMode === '必繳審核' ? 'selected' : ''}>必繳並審核</option></select></label><label class="field-group field-group--wide"><span>適用對象</span><select id="editApplicabilityMode"><option value="全部適用" ${lesson.applicabilityMode !== '指定帳號' && lesson.applicabilityMode !== '其餘未指定' ? 'selected' : ''}>全部適用（一般課程使用）</option><option value="指定帳號" ${lesson.applicabilityMode === '指定帳號' ? 'selected' : ''}>指定門市／帳號</option><option value="其餘未指定" ${lesson.applicabilityMode === '其餘未指定' ? 'selected' : ''}>其餘未指定門市／帳號</option></select></label><div id="applicabilityPicker" class="field-group field-group--wide applicability-picker"><span>指定門市／帳號</span><div id="applicabilitySelectionSummary" class="form-hint"></div>${invalidSelected.length ? `<div class="v1-reject-note"><strong>資料異常：</strong>${escapeHtml(invalidSelected.join('、'))} 無法對應員工主檔，重新儲存前請確認選取人員。</div>` : ''}<input id="applicabilitySearch" type="search" placeholder="搜尋帳號、姓名或店別"><div id="applicabilitySearchResult" class="v1-search-result"></div><div class="learner-checklist applicability-list">${learnerRows || '<div class="manage-empty">目前沒有可選帳號</div>'}</div></div><label class="field-group field-group--wide"><span>作業說明</span><textarea id="editSubmissionNote" placeholder="例如：請下載檢核表填寫後回傳。">${escapeHtml(lesson.submissionNote || '')}</textarea></label></div><p class="form-hint">分流課程只需把特殊門市設成「指定門市／帳號」，一般門市那堂設成「其餘未指定」；一般課程維持「全部適用」即可。發布時系統會檢查重複分流。</p><div class="form-actions"><button class="secondary-button" type="button" data-cancel-editor>取消</button><button class="primary-button" type="submit">儲存</button></div></form>`);
     bindEditorForm();
-    const mode = $('editApplicabilityMode'), picker = $('applicabilityPicker'), search = $('applicabilitySearch');
-    const refreshPicker = () => { if (picker) picker.hidden = mode?.value !== '指定帳號'; };
+    const mode = $('editApplicabilityMode'), picker = $('applicabilityPicker'), search = $('applicabilitySearch'), selectionSummary = $('applicabilitySelectionSummary');
+    const refreshSelectionSummary = () => {
+      if (!selectionSummary) return;
+      const checked = [...document.querySelectorAll('input[name="applicableLearner"]:checked')].map(input => {
+        const learner = learners.find(x => clean(x.employeeId) === clean(input.value));
+        return learner ? `${learner.name || learner.store || '未命名'}｜${learner.employeeId}` : clean(input.value);
+      });
+      selectionSummary.textContent = checked.length ? `已選 ${checked.length} 人：${checked.join('、')}` : '目前未選任何帳號';
+    };
+    const refreshPicker = () => { if (picker) picker.hidden = mode?.value !== '指定帳號'; refreshSelectionSummary(); };
     if (mode) mode.onchange = refreshPicker;
+    document.querySelectorAll('input[name="applicableLearner"]').forEach(input => input.addEventListener('change', refreshSelectionSummary));
     if (search) {
       const filter = () => { const q = normalize(search.value); let shown = 0; document.querySelectorAll('.applicability-learner').forEach(row => { const hit = !q || normalize(row.textContent).includes(q); row.hidden = !hit; if (hit) shown++; }); if ($('applicabilitySearchResult')) $('applicabilitySearchResult').textContent = q ? `找到 ${shown} 筆` : `共 ${learners.length} 筆可選帳號`; };
-      search.oninput = filter; filter();
+      search.oninput = filter; filter(); refreshSelectionSummary();
     }
     refreshPicker();
   }
