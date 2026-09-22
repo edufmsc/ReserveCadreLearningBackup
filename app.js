@@ -5,7 +5,10 @@
   const VERSION = 'V1.0';
   const SESSION_KEY = 'reserve_learning_v11_session';
   const LEGACY_SESSION_KEYS = ['reserve_cadre_stage4_2_session', 'learning_backup_v1_session'];
-  const SYNC_INTERVAL_MS = 60000;
+  const SYNC_INTERVAL_MS = 120000;
+  const IDLE_LOGOUT_MS = 15 * 60 * 1000;
+  const IDLE_WARNING_MS = 14 * 60 * 1000;
+  const IDLE_ACTIVITY_KEY = 'reserve_learning_v1_last_activity';
   const SUBMISSION_CACHE_MS = 120000;
   const VIEW_KEY = 'reserve_learning_v11_view';
   const PDFJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
@@ -62,7 +65,11 @@
     adminCourseSort: 'attention',
     adminSubmissionSearch: '',
     adminSubmissionStatus: '',
-    adminSubmissionArea: ''
+    adminSubmissionArea: '',
+    idleTimer: null,
+    lastActivityAt: 0,
+    lastActivityStoredAt: 0,
+    idleWarned: false
   };
 
   const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, ch => ({
@@ -333,6 +340,77 @@
     [SESSION_KEY, ...LEGACY_SESSION_KEYS].forEach(key => sessionStorage.removeItem(key));
   }
 
+  function readLastActivity() {
+    try { return Number(sessionStorage.getItem(IDLE_ACTIVITY_KEY) || 0); } catch { return 0; }
+  }
+
+  function clearLastActivity() {
+    try { sessionStorage.removeItem(IDLE_ACTIVITY_KEY); } catch {}
+    state.lastActivityAt = 0;
+    state.lastActivityStoredAt = 0;
+    state.idleWarned = false;
+  }
+
+  function recordActivity(force = false) {
+    if (!state.token || !state.user) return;
+    const now = Date.now();
+    if (!force && now - state.lastActivityAt < 1000) return;
+    state.lastActivityAt = now;
+    state.idleWarned = false;
+    if (force || now - state.lastActivityStoredAt >= 15000) {
+      try { sessionStorage.setItem(IDLE_ACTIVITY_KEY, String(now)); } catch {}
+      state.lastActivityStoredAt = now;
+    }
+  }
+
+  function checkIdleNow() {
+    if (!state.token || !state.user) return false;
+    if (state.tracker && (state.tracker.playingVideos.size || state.tracker.visiblePdfs.size)) recordActivity();
+    const base = state.lastActivityAt || readLastActivity() || Date.now();
+    const idleMs = Date.now() - base;
+    if (idleMs >= IDLE_LOGOUT_MS) {
+      logout('idle');
+      return true;
+    }
+    if (idleMs >= IDLE_WARNING_MS && !state.idleWarned) {
+      state.idleWarned = true;
+      showToast('已閒置 14 分鐘，1 分鐘後將自動登出');
+    }
+    return false;
+  }
+
+  function startIdleMonitor(reset = false) {
+    if (state.idleTimer) clearInterval(state.idleTimer);
+    if (reset || !readLastActivity()) recordActivity(true);
+    else {
+      state.lastActivityAt = readLastActivity();
+      state.lastActivityStoredAt = state.lastActivityAt;
+    }
+    state.idleTimer = setInterval(checkIdleNow, 10000);
+  }
+
+  function stopIdleMonitor() {
+    if (state.idleTimer) clearInterval(state.idleTimer);
+    state.idleTimer = null;
+  }
+
+  function hydrationDelayMs() {
+    if (state.user?.roleKey !== 'student') return 0;
+    const value = clean(state.user?.employeeId);
+    let hash = 0;
+    for (let i = 0; i < value.length; i++) hash = ((hash * 31) + value.charCodeAt(i)) >>> 0;
+    return hash % 1800;
+  }
+
+  function scheduleHydrateDashboardData() {
+    const token = state.token;
+    const delay = hydrationDelayMs();
+    window.setTimeout(() => {
+      if (!token || state.token !== token || !state.user) return;
+      hydrateDashboardData().catch(error => showToast(error.message || '資料載入失敗'));
+    }, delay);
+  }
+
   function saveFoldState() {
     try {
       sessionStorage.setItem('reserve_learning_v11_folds', JSON.stringify({
@@ -371,12 +449,8 @@
   }
 
   function startConnectionMonitor() {
-    if (state.healthCheckTimer) clearInterval(state.healthCheckTimer);
-    state.healthCheckTimer = setInterval(() => {
-      if (document.hidden) return;
-      checkHealth({ quiet: true }).catch(() => {});
-    }, 60000);
-    window.addEventListener('online', () => checkHealth().catch(() => {}));
+    if (state.healthCheckTimer) { clearInterval(state.healthCheckTimer); state.healthCheckTimer = null; }
+    window.addEventListener('online', () => setModeBadge('checking', state.token ? '網路已恢復' : '待登入'));
     window.addEventListener('offline', () => setModeBadge('offline', '裝置離線'));
   }
 
@@ -475,7 +549,9 @@
     if (generation !== state.authGeneration) return false;
     captureBootstrap(bootstrap);
     renderDashboard();
-    hydrateDashboardData().catch(error => showToast(error.message || '資料載入失敗'));
+    recordActivity(true);
+    startIdleMonitor(false);
+    scheduleHydrateDashboardData();
     return true;
   }
 
@@ -494,9 +570,10 @@
         captureBootstrap(data);
         saveSession();
         renderDashboard();
-        if (state.features.lazyDataV114 && state.user?.roleKey !== 'admin') ensureStudentPackages().catch(error => showToast(error.message || '課程資料稍後自動重試'));
+        recordActivity(true);
+        startIdleMonitor(false);
         await restoreSavedView();
-        hydrateDashboardData().catch(error => showToast(error.message || '資料稍後自動重試'));
+        scheduleHydrateDashboardData();
         return true;
       } catch (error) {
         if (generation !== state.authGeneration) return false;
@@ -927,6 +1004,7 @@
   function tickTracker() {
     const tracker = state.tracker;
     if (!tracker) return;
+    if (tracker.playingVideos.size || tracker.visiblePdfs.size) recordActivity();
     tracker.playingVideos.forEach(id => {
       const progress = ensureContentProgress(id, 'VIDEO');
       const player = state.youtubePlayers.get(id);
@@ -2145,18 +2223,29 @@
     if (persist) saveViewState({ view: 'student', studentTab: tab, scrollY: 0 });
   }
 
-  function logout() {
-    // FINAL4: invalidate any in-flight login/session restore before clearing UI.
+  function logout(reason = 'manual') {
+    // V1.0 Stability Core: local idle logout stops all background/API activity after 15 minutes.
     state.authGeneration += 1;
     const token = state.token;
     if (state.activeLessonId && !state.previewMode && state.tracker?.dirty) flushProgress(false).catch(() => {});
     stopTracker();
+    stopIdleMonitor();
     state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.submissionDeleteChains.clear(); state.selectedAdminContentFile = null; state.apiConnected = false; state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null; state.activePackageId = ''; state.activeLessonId = ''; state.previewMode = false; state.activeSubmission = null;
     clearSession();
     clearViewState();
+    clearLastActivity();
     $('dashboardView').hidden = true; $('studentDashboard').hidden = true; $('adminDashboard').hidden = true; $('lessonPage').hidden = true; $('loginView').hidden = false; $('password').value = '';
+    const message = $('loginMessage');
+    if (message) {
+      if (reason === 'idle') { message.textContent = '已閒置 15 分鐘，為降低系統負擔已自動登出，請重新登入。'; message.hidden = false; }
+      else if (reason === 'expired') { message.textContent = '登入已逾時，請重新登入。'; message.hidden = false; }
+      else message.hidden = true;
+    }
+    setModeBadge(navigator.onLine === false ? 'offline' : 'checking', navigator.onLine === false ? '裝置離線' : '待登入');
     window.scrollTo({ top: 0, behavior: 'auto' });
-    if (token) api('logout', {}, token, { timeout: 10000 }).catch(() => {});
+    // Idle logout deliberately skips a backend logout request: clearing the client token
+    // stops all future calls immediately and avoids creating a synchronized idle-logout spike.
+    if (token && reason === 'manual') api('logout', {}, token, { timeout: 10000, retry: false }).catch(() => {});
   }
 
   function bindStaticEvents() {
@@ -2169,7 +2258,7 @@
       finally { setButtonBusy(button, false); }
     });
     $('togglePassword').onclick = () => { const input = $('password'); input.type = input.type === 'password' ? 'text' : 'password'; $('togglePassword').textContent = input.type === 'password' ? '顯示' : '隱藏'; };
-    $('logoutButton').onclick = logout;
+    $('logoutButton').onclick = () => logout('manual');
     $('backLessonButton').onclick = () => closeLesson();
     $('lessonBackBottomButton').onclick = () => closeLesson();
     $('completeLessonButton').onclick = completeActiveLesson;
@@ -2181,23 +2270,35 @@
     document.querySelectorAll('[data-student-tab]').forEach(button => button.onclick = () => setStudentTab(button.dataset.studentTab));
     document.querySelectorAll('[data-admin-tab]').forEach(button => button.onclick = () => setAdminTab(button.dataset.adminTab));
     $('adminSearch').oninput = renderAdminPeople;
+    ['pointerdown','keydown','touchstart'].forEach(name => document.addEventListener(name, () => recordActivity(), { passive: true }));
+    window.addEventListener('focus', () => { if (!checkIdleNow()) recordActivity(); });
+    window.addEventListener('pageshow', () => { if (!checkIdleNow()) recordActivity(); });
     window.addEventListener('beforeunload', () => { saveViewState(); if (state.tracker?.dirty) flushProgress(false); });
-    document.addEventListener('visibilitychange', () => { if (document.hidden) { saveViewState(); if (state.tracker?.dirty) flushProgress(false); } });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) { saveViewState(); if (state.tracker?.dirty) flushProgress(false); }
+      else if (!checkIdleNow()) recordActivity();
+    });
     let viewSaveTimer = 0;
-    window.addEventListener('scroll', () => { clearTimeout(viewSaveTimer); viewSaveTimer = setTimeout(() => saveViewState(), 180); }, { passive: true });
+    window.addEventListener('scroll', () => { recordActivity(); clearTimeout(viewSaveTimer); viewSaveTimer = setTimeout(() => saveViewState(), 180); }, { passive: true });
   }
 
   async function init() {
     loadFoldState();
     bindStaticEvents();
     startConnectionMonitor();
-    const healthTask = checkHealth();
+    setModeBadge(navigator.onLine === false ? 'offline' : 'checking', navigator.onLine === false ? '裝置離線' : '待登入');
     const saved = readSession();
-    if (!saved?.token) {
+    const lastActivity = readLastActivity();
+    if (saved?.token && lastActivity && Date.now() - lastActivity >= IDLE_LOGOUT_MS) {
+      clearSession();
+      clearViewState();
+      clearLastActivity();
+    }
+    const current = readSession();
+    if (!current?.token) {
       if ($('bootView')) $('bootView').hidden = true;
       $('loginView').hidden = false;
       $('dashboardView').hidden = true;
-      healthTask.catch(() => {});
       return;
     }
 
@@ -2219,7 +2320,6 @@
         }
       }).catch(() => {});
     }
-    healthTask.catch(() => {});
   }
 
   init();
