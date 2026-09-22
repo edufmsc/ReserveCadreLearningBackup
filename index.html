@@ -41,7 +41,7 @@
           <label class="field-group"><span>帳號</span><input id="employeeId" name="employeeId" type="text" autocomplete="username" placeholder="請輸入帳號" required></label>
           <label class="field-group"><span>密碼</span><div class="password-wrap"><input id="password" name="password" type="password" inputmode="text" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="4" placeholder="4 碼英數" required><button id="togglePassword" class="icon-button" type="button" aria-label="顯示密碼">顯示</button></div></label>
           <div id="loginMessage" class="form-message form-message--error" role="alert" hidden></div>
-          <button id="loginButton" class="primary-button" type="submit">登入</button>
+          <button id="loginButton" class="primary-button" type="submit">登入</button><p class="form-hint">登入後若 15 分鐘沒有操作會自動登出；觀看影片或閱讀 PDF 期間視為使用中。</p>
         </form>
       </section>
 
@@ -81,7 +81,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="api_config.js?v=1.0"></script>
-  <script src="app.js?v=1.0-submission-review-20260914"></script>
+  <script src="app.js?v=1.0-stability-core-20260922"></script>
   <script>
     (() => {
       const FORM_URL = 'https://forms.gle/rSCuspJrPx5YmKAp7';
