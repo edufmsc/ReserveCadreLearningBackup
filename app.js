@@ -69,7 +69,9 @@
     idleTimer: null,
     lastActivityAt: 0,
     lastActivityStoredAt: 0,
-    idleWarned: false
+    idleWarned: false,
+    loginPreflightPromise: null,
+    loginPreflightDone: false
   };
 
   const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, ch => ({
@@ -123,7 +125,7 @@
         let result;
         try { result = JSON.parse(text); }
         catch {
-          const err = new Error('後端暫時回應異常，系統會自動重試。');
+          const err = new Error('後端暫時回應異常。');
           err.code = 'NON_JSON_RESPONSE'; err.retryable = true; throw err;
         }
         markConnectionSuccess(action === 'health' ? clean(result?.data?.version) : '');
@@ -448,6 +450,34 @@
     }
   }
 
+  function loginRetryDelay(account, attempt) {
+    const value = clean(account).toUpperCase();
+    let hash = 0;
+    for (let i = 0; i < value.length; i++) hash = ((hash * 33) + value.charCodeAt(i)) >>> 0;
+    return 650 + (hash % 850) + Math.max(0, attempt - 1) * 450;
+  }
+
+  function startLoginPreflight() {
+    if (state.loginPreflightPromise) return state.loginPreflightPromise;
+    if (state.loginPreflightDone || !configured() || navigator.onLine === false) return Promise.resolve(false);
+    setModeBadge('checking', '後端預熱中');
+    const task = api('health', {}, '', { retry: false, timeout: 9000 })
+      .then(data => {
+        if (data?.features) state.features = { ...state.features, ...data.features };
+        state.loginPreflightDone = true;
+        return !!data?.ok;
+      })
+      .catch(() => false)
+      .finally(() => { state.loginPreflightPromise = null; });
+    state.loginPreflightPromise = task;
+    return task;
+  }
+
+  async function waitLoginPreflight() {
+    const task = state.loginPreflightPromise;
+    if (!task) return;
+    await Promise.race([task, new Promise(resolve => setTimeout(resolve, 2600))]);
+  }
   function startConnectionMonitor() {
     if (state.healthCheckTimer) { clearInterval(state.healthCheckTimer); state.healthCheckTimer = null; }
     window.addEventListener('online', () => setModeBadge('checking', state.token ? '網路已恢復' : '待登入'));
@@ -527,18 +557,28 @@
   async function login(account, password) {
     const generation = ++state.authGeneration;
     clearViewState();
+    await waitLoginPreflight();
     const requestId = `L${Date.now().toString(36)}${Math.random().toString(36).slice(2,10)}`;
     const payload = { employeeId: account, password, requestId };
-    let data;
-    try {
-      data = await api('login', payload, '', { timeout: 18000, retry: false });
-    } catch (error) {
-      const canRetry = !!state.features.loginRetryV1 && ['TIMEOUT','NETWORK_ERROR','NON_JSON_RESPONSE'].includes(error?.code || '');
-      if (!canRetry || generation !== state.authGeneration) throw error;
-      setModeBadge('checking', '後端正在啟動｜自動續登入');
-      await new Promise(resolve => setTimeout(resolve, 700));
-      data = await api('login', payload, '', { timeout: 22000, retry: false });
+    const retryableCodes = new Set(['TIMEOUT','NETWORK_ERROR','NON_JSON_RESPONSE','LOGIN_IN_PROGRESS']);
+    const plans = [18000, 16000, 22000];
+    let data = null;
+    let lastError = null;
+    for (let attempt = 0; attempt < plans.length; attempt++) {
+      if (generation !== state.authGeneration) return false;
+      if (attempt > 0) {
+        setModeBadge('checking', `後端正在啟動｜自動續登入 ${attempt + 1}/${plans.length}`);
+        await new Promise(resolve => setTimeout(resolve, loginRetryDelay(account, attempt)));
+      }
+      try {
+        data = await api('login', payload, '', { timeout: plans[attempt], retry: false });
+        break;
+      } catch (error) {
+        lastError = error;
+        if (!retryableCodes.has(error?.code || '') || attempt === plans.length - 1) throw error;
+      }
     }
+    if (!data) throw lastError || new Error('登入未完成。');
     if (generation !== state.authGeneration) {
       if (data?.sessionToken) api('logout', {}, data.sessionToken, { timeout: 5000, retry: false }).catch(() => {});
       return false;
@@ -554,7 +594,6 @@
     scheduleHydrateDashboardData();
     return true;
   }
-
   async function restoreSession() {
     const saved = readSession();
     if (!saved?.token) return false;
@@ -2294,7 +2333,14 @@
       $('loginMessage').hidden = true;
       const button = $('loginButton'); setButtonBusy(button, true, '登入中…');
       try { await login(clean($('employeeId').value), clean($('password').value)); }
-      catch (error) { state.token = ''; if (isSessionExpiredError(error)) clearSession(); $('loginMessage').textContent = error?.code === 'TIMEOUT' ? '後端本次啟動超過等待時間，請稍候再試。' : (error.message || '登入失敗'); $('loginMessage').hidden = false; }
+      catch (error) {
+        state.token = '';
+        if (isSessionExpiredError(error)) clearSession();
+        const transient = ['TIMEOUT','NETWORK_ERROR','NON_JSON_RESPONSE','LOGIN_IN_PROGRESS'].includes(error?.code || '');
+        $('loginMessage').textContent = transient ? '後端目前仍忙碌，系統已自動重試仍未完成；請稍候約 5 秒後再試一次。' : (error.message || '登入失敗');
+        $('loginMessage').hidden = false;
+        if (transient) { state.loginPreflightDone = false; startLoginPreflight(); }
+      }
       finally { setButtonBusy(button, false); }
     });
     $('togglePassword').onclick = () => { const input = $('password'); input.type = input.type === 'password' ? 'text' : 'password'; $('togglePassword').textContent = input.type === 'password' ? '顯示' : '隱藏'; };
@@ -2339,6 +2385,7 @@
       if ($('bootView')) $('bootView').hidden = true;
       $('loginView').hidden = false;
       $('dashboardView').hidden = true;
+      startLoginPreflight();
       return;
     }
 
