@@ -1721,10 +1721,50 @@
   function boolValue(id) { return $(id)?.value === 'true'; }
   function optionalNumber(id) { const value = clean($(id)?.value); return value === '' ? null : Number(value); }
 
+  function applyAdminFastWrite(data) {
+    if (!data?.fastWrite || !state.adminCatalog) return false;
+    const catalog = state.adminCatalog;
+    catalog.packages = Array.isArray(catalog.packages) ? catalog.packages : [];
+    catalog.assignments = Array.isArray(catalog.assignments) ? catalog.assignments : [];
+    catalog.learners = Array.isArray(catalog.learners) ? catalog.learners : [];
+
+    if (data.removedPackageId) {
+      const id = clean(data.removedPackageId);
+      catalog.packages = catalog.packages.filter(pkg => clean(pkg.id) !== id);
+      catalog.assignments = catalog.assignments.filter(row => clean(row.packageId) !== id);
+      state.manageOpenPackages.delete(id);
+    }
+
+    if (data.package?.id) {
+      const incoming = data.package;
+      const index = catalog.packages.findIndex(pkg => clean(pkg.id) === clean(incoming.id));
+      if (index >= 0) catalog.packages[index] = incoming;
+      else catalog.packages.push(incoming);
+      catalog.packages.sort((a,b) => n(a.sort) - n(b.sort));
+    }
+
+    if (Array.isArray(data.assignmentsForPackage)) {
+      const packageId = clean(data.packageId);
+      catalog.assignments = catalog.assignments
+        .filter(row => clean(row.packageId) !== packageId)
+        .concat(data.assignmentsForPackage);
+    }
+
+    state.adminCatalog = catalog;
+    state.adminCatalogLoaded = data.refreshCatalog ? false : true;
+    if (data.refreshCatalog) state.adminCatalogLoading = null;
+    return true;
+  }
+
   async function saveAdminAction(action, payload) {
     const timeout = action === 'saveContent' && payload?.fileBase64 ? 90000 : ['moveContentsToLesson','reuseContents','copyLesson','copyPackage'].includes(action) ? 120000 : 15000;
     const data = await api(action, payload, state.token, { timeout });
-    if (data?.catalog) { state.adminCatalog = data.catalog; state.adminCatalogLoaded = true; }
+    if (data?.catalog) {
+      state.adminCatalog = data.catalog;
+      state.adminCatalogLoaded = true;
+    } else {
+      applyAdminFastWrite(data);
+    }
     if (Array.isArray(data?.overview)) { state.adminOverview = data.overview; state.overviewDirty = false; }
     else state.overviewDirty = true;
     if (data?.user) state.user = data.user;
