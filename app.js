@@ -55,6 +55,8 @@
     adminTrackingDetailInflight: new Map(),
     adminPeopleRenderFrame: 0,
     adminCourseRenderFrame: 0,
+    progressPending: new Map(),
+    progressSaveInflight: new Map(),
     submissionDeleteChains: new Map(),
     apiConnected: false,
     connectionFailures: 0,
@@ -515,7 +517,10 @@
 
   function startConnectionMonitor() {
     if (state.healthCheckTimer) { clearInterval(state.healthCheckTimer); state.healthCheckTimer = null; }
-    window.addEventListener('online', () => setModeBadge('checking', state.token ? '網路已恢復' : '待登入'));
+    window.addEventListener('online', () => {
+      setModeBadge('checking', state.token ? '網路已恢復' : '待登入');
+      retryPendingProgress();
+    });
     window.addEventListener('offline', () => setModeBadge('offline', '裝置離線'));
   }
 
@@ -1128,20 +1133,97 @@
     if (tracker.dirty && Date.now() - tracker.lastSync >= SYNC_INTERVAL_MS) flushProgress(false);
   }
 
+  function snapshotContentProgress(contentProgress) {
+    try { return JSON.parse(JSON.stringify(contentProgress || {})); }
+    catch { return {}; }
+  }
+
+  function queueProgressSave(lessonId, contentProgress) {
+    const id = clean(lessonId);
+    if (!id) return;
+    state.progressPending.set(id, { lessonId: id, contentProgress: snapshotContentProgress(contentProgress) });
+  }
+
+  async function drainProgressSave(lessonId, wait = false) {
+    const id = clean(lessonId);
+    if (!id || !state.token) return;
+    const inflight = state.progressSaveInflight.get(id);
+    if (inflight) {
+      if (wait) {
+        try { await inflight; } catch {}
+        if (state.progressPending.has(id)) return drainProgressSave(id, true);
+      }
+      return inflight;
+    }
+    const payload = state.progressPending.get(id);
+    if (!payload) return;
+    state.progressPending.delete(id);
+    const token = state.token;
+    const task = api('saveProgress', payload, token, { retry: true, timeout: 12000 })
+      .catch(error => {
+        if (token === state.token && !isSessionExpiredError(error) && !state.progressPending.has(id)) {
+          state.progressPending.set(id, payload);
+        }
+        throw error;
+      })
+      .finally(() => {
+        if (state.progressSaveInflight.get(id) === task) state.progressSaveInflight.delete(id);
+        if (token === state.token && state.progressPending.has(id)) {
+          setTimeout(() => drainProgressSave(id, false).catch(() => {}), 0);
+        }
+      });
+    state.progressSaveInflight.set(id, task);
+    if (wait) return task;
+    task.catch(() => {});
+    return task;
+  }
+
+  function retryPendingProgress() {
+    if (!state.token || navigator.onLine === false) return;
+    [...state.progressPending.keys()].forEach(lessonId => drainProgressSave(lessonId, false).catch(() => {}));
+  }
+
+  function flushProgressKeepalive() {
+    if (!configured() || !state.token || state.previewMode) return;
+    const tracker = state.tracker;
+    const { lesson } = activeLesson();
+    if (tracker && lesson && tracker.dirty) {
+      queueProgressSave(lesson.id, tracker.contentProgress);
+      tracker.dirty = false;
+    }
+    state.progressPending.forEach(payload => {
+      try {
+        fetch(window.LEARNING_CONFIG.API_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
+          body: JSON.stringify({ action: 'saveProgress', payload, sessionToken: state.token }),
+          mode: 'cors',
+          credentials: 'omit',
+          cache: 'no-store',
+          redirect: 'follow',
+          referrerPolicy: 'no-referrer',
+          keepalive: true
+        }).catch(() => {});
+      } catch {}
+    });
+  }
+
   async function flushProgress(wait = false) {
     const tracker = state.tracker;
     const { lesson } = activeLesson();
-    if (!tracker || !lesson || !tracker.dirty || state.previewMode) return;
-    tracker.dirty = false;
-    tracker.lastSync = Date.now();
-    const payload = { lessonId: lesson.id, contentProgress: tracker.contentProgress };
-    const task = api('saveProgress', payload).then(packages => {
-      if (Array.isArray(packages)) state.packages = packages;
-    }).catch(error => {
-      tracker.dirty = true;
+    if (!tracker || !lesson || state.previewMode) return;
+    if (tracker.dirty) {
+      queueProgressSave(lesson.id, tracker.contentProgress);
+      tracker.dirty = false;
+      tracker.lastSync = Date.now();
+    }
+    if (!state.progressPending.has(lesson.id) && !state.progressSaveInflight.has(lesson.id)) return;
+    try {
+      await drainProgressSave(lesson.id, wait);
+    } catch (error) {
+      if (state.tracker === tracker) tracker.dirty = true;
       if (wait) throw error;
-    });
-    if (wait) await task;
+    }
   }
 
   function loadYoutubeApi() {
@@ -1342,6 +1424,16 @@
     const courses = uniquePackagesForAdmin().sort((a,b) => clean(a.title).localeCompare(clean(b.title), 'zh-Hant'));
     if (state.adminPeopleCourseId && !courses.some(course => clean(course.id) === clean(state.adminPeopleCourseId))) state.adminPeopleCourseId = '';
 
+    const scopePeople = allPeople.filter(person => !state.adminPeopleArea || clean(person.area) === state.adminPeopleArea);
+    const scopePackagesFor = person => {
+      const packages = person?.packages || [];
+      return state.adminPeopleCourseId ? packages.filter(pkg => clean(pkg.id) === clean(state.adminPeopleCourseId)) : packages;
+    };
+    const scopeAssigned = scopePeople.reduce((sum, person) => sum + scopePackagesFor(person).length, 0);
+    const scopeComplete = scopePeople.reduce((sum, person) => sum + scopePackagesFor(person).filter(pkg => packageSummary(pkg).status === 'complete').length, 0);
+    const scopeIncomplete = Math.max(0, scopeAssigned - scopeComplete);
+    const scopeRate = scopeAssigned ? Math.round(scopeComplete * 100 / scopeAssigned) : 0;
+
     const people = allPeople.filter(person => {
       if (state.adminPeopleArea && clean(person.area) !== state.adminPeopleArea) return false;
       if (!adminPersonMatchesStatus(person)) return false;
@@ -1364,6 +1456,12 @@
             <option value="in_progress" ${state.adminPeopleStatus === 'in_progress' ? 'selected' : ''}>進行中</option>
             <option value="complete" ${state.adminPeopleStatus === 'complete' ? 'selected' : ''}>已完成</option>
           </select></label>
+        </div>
+        <div class="admin-course-summary-row admin-people-summary-row">
+          <button type="button" class="admin-course-stat" tabindex="-1"><span>範圍人數</span><strong>${scopePeople.length}</strong></button>
+          <button type="button" class="admin-course-stat" tabindex="-1"><span>課程指派</span><strong>${scopeAssigned}</strong></button>
+          <button type="button" class="admin-course-stat" tabindex="-1"><span>未完成</span><strong>${scopeIncomplete}</strong></button>
+          <button type="button" class="admin-course-stat" tabindex="-1"><span>完成率</span><strong>${scopeRate}%</strong></button>
         </div>
         <p class="package-meta">目前顯示 ${people.length} 人｜其中 ${incompletePeople} 人仍有未完成課程</p>
       </section>`;
@@ -2484,7 +2582,7 @@
     if (state.activeLessonId && !state.previewMode && state.tracker?.dirty) flushProgress(false).catch(() => {});
     stopTracker();
     stopIdleMonitor();
-    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.submissionDeleteChains.clear(); state.selectedAdminContentFile = null; state.apiConnected = false; state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null; state.adminOverviewLoading = null; state.studentLessonInflight.clear(); state.adminTrackingDetailInflight.clear(); state.adminPeopleArea = ''; state.adminPeopleCourseId = ''; state.adminPeopleStatus = ''; state.adminCourseId = ''; state.adminCourseArea = ''; state.adminCourseStatus = ''; state.adminCourseStore = ''; state.adminCourseSearch = ''; state.activePackageId = ''; state.activeLessonId = ''; state.previewMode = false; state.activeSubmission = null;
+    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.submissionDeleteChains.clear(); state.selectedAdminContentFile = null; state.apiConnected = false; state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null; state.adminOverviewLoading = null; state.studentLessonInflight.clear(); state.adminTrackingDetailInflight.clear(); state.progressPending.clear(); state.progressSaveInflight.clear(); state.adminPeopleArea = ''; state.adminPeopleCourseId = ''; state.adminPeopleStatus = ''; state.adminCourseId = ''; state.adminCourseArea = ''; state.adminCourseStatus = ''; state.adminCourseStore = ''; state.adminCourseSearch = ''; state.activePackageId = ''; state.activeLessonId = ''; state.previewMode = false; state.activeSubmission = null;
     clearSession();
     clearViewState();
     clearLastActivity();
@@ -2544,12 +2642,24 @@
     document.querySelectorAll('[data-admin-tab]').forEach(button => button.onclick = () => setAdminTab(button.dataset.adminTab));
     $('adminSearch').oninput = scheduleAdminPeopleRender;
     ['pointerdown','keydown','touchstart'].forEach(name => document.addEventListener(name, () => recordActivity(), { passive: true }));
-    window.addEventListener('focus', () => { if (!checkIdleNow()) recordActivity(); });
-    window.addEventListener('pageshow', () => { if (!checkIdleNow()) recordActivity(); });
-    window.addEventListener('beforeunload', () => { saveViewState(); if (state.tracker?.dirty) flushProgress(false); });
+    window.addEventListener('focus', () => {
+      if (!checkIdleNow()) recordActivity();
+      retryPendingProgress();
+    });
+    window.addEventListener('pageshow', () => {
+      if (!checkIdleNow()) recordActivity();
+      retryPendingProgress();
+    });
+    window.addEventListener('beforeunload', () => saveViewState());
+    window.addEventListener('pagehide', () => { saveViewState(); flushProgressKeepalive(); });
     document.addEventListener('visibilitychange', () => {
-      if (document.hidden) { saveViewState(); if (state.tracker?.dirty) flushProgress(false); }
-      else if (!checkIdleNow()) recordActivity();
+      if (document.hidden) {
+        saveViewState();
+        if (state.tracker?.dirty) flushProgress(false);
+      } else {
+        if (!checkIdleNow()) recordActivity();
+        retryPendingProgress();
+      }
     });
     let viewSaveTimer = 0;
     window.addEventListener('scroll', () => { recordActivity(); clearTimeout(viewSaveTimer); viewSaveTimer = setTimeout(() => saveViewState(), 180); }, { passive: true });
