@@ -820,6 +820,8 @@
         const list = document.querySelector(`[data-package-lessons="${CSS.escape(button.dataset.togglePackage)}"]`);
         if (!list) return;
         list.hidden = !list.hidden;
+        const card = button.closest('.package-card');
+        if (card) card.classList.toggle('is-expanded', !list.hidden);
         button.textContent = list.hidden ? '展開子項目' : '收合子項目';
       };
     });
@@ -874,7 +876,7 @@
       $('lessonPackageName').textContent = pkg.title;
       $('lessonTitle').textContent = visibleLessonTitle(lesson);
       $('lessonMeta').innerHTML = '';
-      $('lessonContent').innerHTML = '<div class="empty-state"><h3>正在載入教材…</h3><p>先載入需要的這一堂，不下載其他課程教材。</p></div>';
+      $('lessonContent').innerHTML = '<div class="empty-state"><h3>正在載入教材…</h3></div>';
       try { ({ pkg, lesson } = await ensureStudentLessonDetail(packageId, lessonId)); }
       catch (error) { $('lessonPage').hidden = true; $('studentDashboard').hidden = false; showToast(error.message || '教材載入失敗'); return; }
     }
@@ -957,11 +959,11 @@
     const url = clean(item.url);
     const progress = trackerProgress(item);
     if (type === 'TEXT') return `<article class="content-block"><h3>${title}</h3><div class="text-material">${escapeHtml(item.text || '').replace(/\n/g, '<br>')}</div></article>`;
-    if (type === 'FILE') return `<article class="content-block"><h3>${title}</h3>${url ? `<div class="download-card"><div><strong>${title}</strong><span>按下後直接下載，不會跳到 Google Drive 頁面</span></div><button class="primary-button primary-button--fit" type="button" data-direct-download="${escapeHtml(url)}">下載檔案</button></div>` : '<div class="content-placeholder">下載檔尚未設定</div>'}</article>`;
+    if (type === 'FILE') return `<article class="content-block content-block--file"><h3>${title}</h3>${url ? `<div class="download-card"><button class="primary-button primary-button--fit" type="button" data-direct-download="${escapeHtml(url)}">下載教材</button></div>` : '<div class="content-placeholder">教材尚未設定</div>'}</article>`;
     if (type === 'VIDEO') {
       const id = youtubeId(url);
       if (!id) return `<article class="content-block"><h3>${title}</h3><div class="content-placeholder">影片連結格式不正確</div></article>`;
-      return `<article class="content-block video-content" data-media-block data-content-id="${escapeHtml(item.id)}" data-media-type="VIDEO" data-youtube-id="${escapeHtml(id)}"><h3>${title}</h3><div class="video-player"><div class="video-player__target" id="video_${escapeHtml(item.id)}"><div class="media-lazy-placeholder"><div><strong>影片尚未載入</strong><span>滑到此處才載入播放器</span></div></div></div></div><div class="pdf-status-line"><span>觀看：<strong data-video-time="${escapeHtml(item.id)}">${formatSeconds(progress.seconds || 0)}</strong></span></div></article>`;
+      return `<article class="content-block video-content" data-media-block data-content-id="${escapeHtml(item.id)}" data-media-type="VIDEO" data-youtube-id="${escapeHtml(id)}"><h3>${title}</h3><div class="video-player"><div class="video-player__target" id="video_${escapeHtml(item.id)}"><div class="media-lazy-placeholder"><div><strong>載入影片…</strong></div></div></div></div><div class="pdf-status-line"><span>觀看：<strong data-video-time="${escapeHtml(item.id)}">${formatSeconds(progress.seconds || 0)}</strong></span></div></article>`;
     }
     if (type === 'PDF') {
       if (!url) return `<article class="content-block"><h3>${title}</h3><div class="content-placeholder">PDF 尚未設定</div></article>`;
@@ -1560,6 +1562,7 @@
           bindAdminPersonContent(content);
         }
         content.hidden = !content.hidden;
+        if (card) card.classList.toggle('is-expanded', !content.hidden);
         button.classList.toggle('is-open', !content.hidden);
       };
     });
@@ -1644,7 +1647,12 @@
     const row = button.closest('.person-package');
     const body = row?.querySelector(':scope > .person-package__body');
     if (!body) return;
-    if (!body.hidden) { body.hidden = true; button.classList.remove('is-open'); return; }
+    if (!body.hidden) {
+      body.hidden = true;
+      row?.classList.remove('is-expanded');
+      button.classList.remove('is-open');
+      return;
+    }
     if (body.dataset.loaded !== '1') {
       body.innerHTML = '<div class="manage-empty">正在載入細項…</div>';
       body.hidden = false;
@@ -1654,6 +1662,7 @@
         body.dataset.loaded = '1';
       } catch (error) { body.innerHTML = `<div class="manage-empty">${escapeHtml(error.message || '細項載入失敗')}</div>`; }
     } else body.hidden = false;
+    row?.classList.add('is-expanded');
     button.classList.add('is-open');
   }
 
@@ -1694,7 +1703,7 @@
     if (!host) return;
     const rows = filteredAdminCourseRows();
     if (count) count.textContent = `顯示 ${rows.length} 人`;
-    host.innerHTML = rows.length ? rows.map(({ person, pkg, summary }) => `<div class="person-package admin-course-person"><button class="person-package__toggle" type="button" data-course-person="${escapeHtml(person.employeeId)}" data-course-package="${escapeHtml(pkg.id)}"><span><strong>${escapeHtml(person.name)}｜${escapeHtml(person.employeeId)}</strong><small>${escapeHtml(person.store || '未設定店別')}｜${summary.done}/${summary.total} 完成</small></span>${statusTag(summary.status)}</button><div class="person-package__body" hidden></div></div>`).join('') : '<div class="empty-state"><h3>目前篩選條件下沒有資料</h3><p>可調整狀態、店別或搜尋條件。</p></div>';
+    host.innerHTML = rows.length ? rows.map(({ person, pkg, summary }) => `<div class="person-package admin-course-person"><button class="person-package__toggle" type="button" data-course-person="${escapeHtml(person.employeeId)}" data-course-package="${escapeHtml(pkg.id)}"><span><strong>${escapeHtml(person.name)}｜${escapeHtml(person.employeeId)}</strong><small>${escapeHtml(person.store || '未設定店別')}｜${summary.done}/${summary.total} 完成</small></span>${statusTag(summary.status)}</button><div class="person-package__body" hidden></div></div>`).join('') : '<div class="empty-state"><h3>查無符合資料</h3></div>';
     host.querySelectorAll('[data-course-person]').forEach(button => button.onclick = () => renderAdminCoursePersonDetails(button));
   }
 
@@ -1717,7 +1726,7 @@
     });
     const options = packages.map(pkg => `<option value="${escapeHtml(pkg.id)}" ${pkg.id === state.adminCourseId ? 'selected' : ''}>${escapeHtml(pkg.title)}</option>`).join('');
     const areaOptions = areas.map(area => `<option value="${escapeHtml(area)}" ${area === state.adminCourseArea ? 'selected' : ''}>${escapeHtml(area)}</option>`).join('');
-    host.innerHTML = `<section class="admin-course-filter-card"><div class="admin-course-filter-grid"><label class="field-group"><span>課程</span><select id="adminCourseSelect"><option value="">請先選擇課程</option>${options}</select></label><label class="field-group"><span>轄區</span><select id="adminCourseArea" ${state.adminCourseId ? '' : 'disabled'}><option value="">全部轄區</option>${areaOptions}</select></label><label class="field-group"><span>狀態</span><select id="adminCourseStatus" ${state.adminCourseId ? '' : 'disabled'}><option value="" ${!state.adminCourseStatus ? 'selected' : ''}>全部狀態</option><option value="incomplete" ${state.adminCourseStatus === 'incomplete' ? 'selected' : ''}>未完成</option><option value="not_started" ${state.adminCourseStatus === 'not_started' ? 'selected' : ''}>未開始</option><option value="in_progress" ${state.adminCourseStatus === 'in_progress' ? 'selected' : ''}>進行中</option><option value="complete" ${state.adminCourseStatus === 'complete' ? 'selected' : ''}>已完成</option></select></label><label class="field-group"><span>店別</span><select id="adminCourseStore" ${state.adminCourseId ? '' : 'disabled'}><option value="">全部店別</option>${stores.map(store => `<option value="${escapeHtml(store)}" ${store === state.adminCourseStore ? 'selected' : ''}>${escapeHtml(store)}</option>`).join('')}</select></label><label class="field-group"><span>排序</span><select id="adminCourseSort" ${state.adminCourseId ? '' : 'disabled'}><option value="attention" ${state.adminCourseSort === 'attention' ? 'selected' : ''}>需追蹤優先</option><option value="store" ${state.adminCourseSort === 'store' ? 'selected' : ''}>店別</option><option value="name" ${state.adminCourseSort === 'name' ? 'selected' : ''}>姓名</option><option value="employee" ${state.adminCourseSort === 'employee' ? 'selected' : ''}>帳號</option></select></label></div>${state.adminCourseId ? `<div class="admin-course-summary-row"><button type="button" class="admin-course-stat ${!state.adminCourseStatus ? 'is-active' : ''}" data-admin-course-status=""><span>指派</span><strong>${counts.all}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'incomplete' ? 'is-active' : ''}" data-admin-course-status="incomplete"><span>未完成</span><strong>${counts.incomplete}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'not_started' ? 'is-active' : ''}" data-admin-course-status="not_started"><span>未開始</span><strong>${counts.not_started}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'in_progress' ? 'is-active' : ''}" data-admin-course-status="in_progress"><span>進行中</span><strong>${counts.in_progress}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'complete' ? 'is-active' : ''}" data-admin-course-status="complete"><span>已完成</span><strong>${counts.complete}</strong></button></div><div class="admin-course-search-row"><input id="adminCourseSearch" type="search" value="${escapeHtml(state.adminCourseSearch)}" placeholder="搜尋帳號、姓名、店別或轄區"><span id="adminCourseResultCount" class="package-meta"></span></div><p class="form-hint">統計數字會依目前轄區／店別範圍更新；點人員後才載入子課程細項，避免一次展開大量資料。</p><div id="adminCourseResultList" class="admin-course-result-list"></div>` : '<div class="empty-state admin-course-empty"><h3>請先選擇要查看的課程</h3><p>選定後可依轄區、狀態、店別、帳號或姓名快速篩選。</p></div>'}</section>`;
+    host.innerHTML = `<section class="admin-course-filter-card"><div class="admin-course-filter-grid"><label class="field-group"><span>課程</span><select id="adminCourseSelect"><option value="">請先選擇課程</option>${options}</select></label><label class="field-group"><span>轄區</span><select id="adminCourseArea" ${state.adminCourseId ? '' : 'disabled'}><option value="">全部轄區</option>${areaOptions}</select></label><label class="field-group"><span>狀態</span><select id="adminCourseStatus" ${state.adminCourseId ? '' : 'disabled'}><option value="" ${!state.adminCourseStatus ? 'selected' : ''}>全部狀態</option><option value="incomplete" ${state.adminCourseStatus === 'incomplete' ? 'selected' : ''}>未完成</option><option value="not_started" ${state.adminCourseStatus === 'not_started' ? 'selected' : ''}>未開始</option><option value="in_progress" ${state.adminCourseStatus === 'in_progress' ? 'selected' : ''}>進行中</option><option value="complete" ${state.adminCourseStatus === 'complete' ? 'selected' : ''}>已完成</option></select></label><label class="field-group"><span>店別</span><select id="adminCourseStore" ${state.adminCourseId ? '' : 'disabled'}><option value="">全部店別</option>${stores.map(store => `<option value="${escapeHtml(store)}" ${store === state.adminCourseStore ? 'selected' : ''}>${escapeHtml(store)}</option>`).join('')}</select></label><label class="field-group"><span>排序</span><select id="adminCourseSort" ${state.adminCourseId ? '' : 'disabled'}><option value="attention" ${state.adminCourseSort === 'attention' ? 'selected' : ''}>需追蹤優先</option><option value="store" ${state.adminCourseSort === 'store' ? 'selected' : ''}>店別</option><option value="name" ${state.adminCourseSort === 'name' ? 'selected' : ''}>姓名</option><option value="employee" ${state.adminCourseSort === 'employee' ? 'selected' : ''}>帳號</option></select></label></div>${state.adminCourseId ? `<div class="admin-course-summary-row"><button type="button" class="admin-course-stat ${!state.adminCourseStatus ? 'is-active' : ''}" data-admin-course-status=""><span>指派</span><strong>${counts.all}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'incomplete' ? 'is-active' : ''}" data-admin-course-status="incomplete"><span>未完成</span><strong>${counts.incomplete}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'not_started' ? 'is-active' : ''}" data-admin-course-status="not_started"><span>未開始</span><strong>${counts.not_started}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'in_progress' ? 'is-active' : ''}" data-admin-course-status="in_progress"><span>進行中</span><strong>${counts.in_progress}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'complete' ? 'is-active' : ''}" data-admin-course-status="complete"><span>已完成</span><strong>${counts.complete}</strong></button></div><div class="admin-course-search-row"><input id="adminCourseSearch" type="search" value="${escapeHtml(state.adminCourseSearch)}" placeholder="搜尋帳號、姓名、店別或轄區"><span id="adminCourseResultCount" class="package-meta"></span></div><p class="form-hint">可依轄區、狀態與店別快速查看課程完成情形。</p><div id="adminCourseResultList" class="admin-course-result-list"></div>` : '<div class="empty-state admin-course-empty"><h3>請先選擇要查看的課程</h3><p>選定後可依轄區、狀態、店別、帳號或姓名快速篩選。</p></div>'}</section>`;
     bindAdminCourseViewEvents();
     if (state.adminCourseId) renderAdminCourseResultList();
   }
