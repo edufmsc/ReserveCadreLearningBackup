@@ -51,6 +51,10 @@
     studentPackagesLoading: null,
     adminCatalogLoading: null,
     adminOverviewLoading: null,
+    studentLessonInflight: new Map(),
+    adminTrackingDetailInflight: new Map(),
+    adminPeopleRenderFrame: 0,
+    adminCourseRenderFrame: 0,
     submissionDeleteChains: new Map(),
     apiConnected: false,
     connectionFailures: 0,
@@ -730,7 +734,7 @@
       <article class="summary-card"><span>課程完成</span><strong>${complete}/${state.packages.length}</strong></article>`;
     $('packageList').innerHTML = state.packages.length ? state.packages.map(renderPackageCard).join('') : (state.features.lazyDataV114 && !state.studentPackagesLoaded ? '<div class="empty-state"><h3>正在載入課程…</h3></div>' : '<div class="empty-state"><h3>目前沒有指派課程</h3></div>');
     bindStudentPackageEvents();
-    renderStudentRecords();
+    if (state.studentTab === 'records') renderStudentRecords();
   }
 
   function renderPackageCard(pkg) {
@@ -782,15 +786,22 @@
   async function ensureStudentLessonDetail(packageId, lessonId) {
     let found = findStudentLesson(packageId, lessonId);
     if (!state.features.splitReadV1 || found.lesson?.detailLoaded !== false) return found;
-    const data = await api('studentLesson', { lessonId }, state.token, { retry: true, timeout: 12000 });
-    const detail = data?.lesson;
-    if (!detail?.id) throw new Error('教材資料格式不完整');
-    const pkg = state.packages.find(x => x.id === (data.packageId || packageId));
-    if (!pkg) throw new Error('找不到課程');
-    const position = (pkg.lessons || []).findIndex(x => x.id === detail.id);
-    if (position < 0) throw new Error('找不到子課程');
-    pkg.lessons[position] = { ...pkg.lessons[position], ...detail, detailLoaded: true };
-    return { pkg, lesson: pkg.lessons[position] };
+    const key = clean(packageId) + '|' + clean(lessonId);
+    const inflight = state.studentLessonInflight.get(key);
+    if (inflight) return inflight;
+    const task = (async () => {
+      const data = await api('studentLesson', { lessonId }, state.token, { retry: true, timeout: 12000 });
+      const detail = data?.lesson;
+      if (!detail?.id) throw new Error('教材資料格式不完整');
+      const pkg = state.packages.find(x => x.id === (data.packageId || packageId));
+      if (!pkg) throw new Error('找不到課程');
+      const position = (pkg.lessons || []).findIndex(x => x.id === detail.id);
+      if (position < 0) throw new Error('找不到子課程');
+      pkg.lessons[position] = { ...pkg.lessons[position], ...detail, detailLoaded: true };
+      return { pkg, lesson: pkg.lessons[position] };
+    })().finally(() => state.studentLessonInflight.delete(key));
+    state.studentLessonInflight.set(key, task);
+    return task;
   }
 
   async function openLesson(packageId, lessonId) {
@@ -817,7 +828,6 @@
 
     if (lesson.status === 'not_started') {
       lesson.status = 'in_progress';
-      renderStudent();
       api('saveProgress', { lessonId: lesson.id, contentProgress: lesson.contentProgress || {} }).then(packages => {
         if (Array.isArray(packages)) state.packages = packages;
       }).catch(error => showToast(error.message || '開始紀錄寫入失敗'));
@@ -1020,7 +1030,10 @@
           const canvas = wrap.querySelector('canvas');
           canvas.width = Math.max(1, Math.floor(renderViewport.width));
           canvas.height = Math.max(1, Math.floor(renderViewport.height));
+          canvas.style.width = `${Math.max(1, Math.floor(baseViewport.width * cssScale))}px`;
+          canvas.style.height = `${Math.max(1, Math.floor(baseViewport.height * cssScale))}px`;
           await page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport: renderViewport }).promise;
+          wrap.style.minHeight = '';
           wrap.dataset.rendered = '1';
         } finally { wrap.dataset.rendering = '0'; }
       };
@@ -1028,21 +1041,32 @@
         if (entry.isIntersecting) renderPage(entry.target).catch(() => {});
       }), { root: host, rootMargin: '900px 0px', threshold: 0.01 });
       state.pdfPageObservers.add(observer);
+
+      const firstPage = await pdf.getPage(1);
+      const firstViewport = firstPage.getViewport({ scale: 1 });
+      const firstCssScale = Math.min(2, available / firstViewport.width);
+      const estimatedWidth = Math.max(1, Math.floor(firstViewport.width * firstCssScale));
+      const estimatedHeight = Math.max(1, Math.floor(firstViewport.height * firstCssScale));
+
       for (let pageNo = 1; pageNo <= pdf.numPages; pageNo++) {
-        const page = await pdf.getPage(pageNo);
-        const baseViewport = page.getViewport({ scale: 1 });
-        const cssScale = Math.min(2, available / baseViewport.width);
-        const cssWidth = Math.max(1, Math.floor(baseViewport.width * cssScale));
-        const cssHeight = Math.max(1, Math.floor(baseViewport.height * cssScale));
         const wrap = document.createElement('div');
-        wrap.className = 'pdf-page-wrap'; wrap.dataset.pageNo = String(pageNo);
-        const label = document.createElement('div'); label.className = 'pdf-page-label'; label.textContent = `第 ${pageNo} / ${pdf.numPages} 頁`;
-        const canvas = document.createElement('canvas'); canvas.className = 'pdf-page-canvas';
-        canvas.style.width = `${cssWidth}px`; canvas.style.height = `${cssHeight}px`;
+        wrap.className = 'pdf-page-wrap';
+        wrap.dataset.pageNo = String(pageNo);
+        wrap.style.minHeight = `${estimatedHeight + 30}px`;
+        const label = document.createElement('div');
+        label.className = 'pdf-page-label';
+        label.textContent = `第 ${pageNo} / ${pdf.numPages} 頁`;
+        const canvas = document.createElement('canvas');
+        canvas.className = 'pdf-page-canvas';
+        canvas.style.width = `${estimatedWidth}px`;
+        canvas.style.height = `${estimatedHeight}px`;
         canvas.addEventListener('contextmenu', event => event.preventDefault());
-        wrap.append(label, canvas); stack.appendChild(wrap); observer.observe(wrap);
+        wrap.append(label, canvas);
+        stack.appendChild(wrap);
+        observer.observe(wrap);
       }
-      const first = stack.querySelector('.pdf-page-wrap'); if (first) renderPage(first).catch(() => {});
+      const first = stack.querySelector('.pdf-page-wrap');
+      if (first) renderPage(first).catch(() => {});
     } catch (error) {
       block.dataset.loaded = '0';
       host.innerHTML = `<div class="content-placeholder">PDF 載入失敗：${escapeHtml(error.message || '請確認檔案權限')}</div>`;
@@ -1247,9 +1271,10 @@
       <article class="summary-card"><span>課程指派</span><strong>${assigned}</strong></article>
       <article class="summary-card"><span>未完成</span><strong>${incomplete}</strong></article>
       <article class="summary-card"><span>已完成</span><strong>${done}</strong></article>`;
-    renderAdminPeople();
-    renderAdminCourses();
-    renderAdminManage();
+    if (state.adminTab === 'courses') renderAdminCourses();
+    else if (state.adminTab === 'manage') {
+      if (state.adminCatalogLoaded) renderAdminManage();
+    } else if (state.adminTab === 'people') renderAdminPeople();
   }
 
   async function ensureAdminOverview() {
@@ -1274,6 +1299,22 @@
     })();
     state.adminOverviewLoading = task;
     return task;
+  }
+
+  function scheduleAdminPeopleRender() {
+    if (state.adminPeopleRenderFrame) cancelAnimationFrame(state.adminPeopleRenderFrame);
+    state.adminPeopleRenderFrame = requestAnimationFrame(() => {
+      state.adminPeopleRenderFrame = 0;
+      if (state.adminTab === 'people') renderAdminPeople();
+    });
+  }
+
+  function scheduleAdminCourseRender() {
+    if (state.adminCourseRenderFrame) cancelAnimationFrame(state.adminCourseRenderFrame);
+    state.adminCourseRenderFrame = requestAnimationFrame(() => {
+      state.adminCourseRenderFrame = 0;
+      if (state.adminTab === 'courses') renderAdminCourseResultList();
+    });
   }
 
   function matchesAdminSearch(value) {
@@ -1348,14 +1389,21 @@
     const person = (state.adminOverview || []).find(x => clean(x.employeeId) === clean(employeeId));
     let pkg = (person?.packages || []).find(x => clean(x.id) === clean(packageId));
     if (!state.features.splitReadV1 || Array.isArray(pkg?.lessons)) return { person, pkg };
-    const data = await api('adminTrackingDetail', { employeeId, packageId }, state.token, { retry: true, timeout: 12000 });
-    if (!data?.package) throw new Error('找不到課程細項');
-    if (person) {
-      const position = (person.packages || []).findIndex(x => clean(x.id) === clean(packageId));
-      if (position >= 0) person.packages[position] = { ...person.packages[position], ...data.package };
-      pkg = person.packages[position];
-    } else pkg = data.package;
-    return { person, pkg };
+    const key = clean(employeeId) + '|' + clean(packageId);
+    const inflight = state.adminTrackingDetailInflight.get(key);
+    if (inflight) return inflight;
+    const task = (async () => {
+      const data = await api('adminTrackingDetail', { employeeId, packageId }, state.token, { retry: true, timeout: 12000 });
+      if (!data?.package) throw new Error('找不到課程細項');
+      if (person) {
+        const position = (person.packages || []).findIndex(x => clean(x.id) === clean(packageId));
+        if (position >= 0) person.packages[position] = { ...person.packages[position], ...data.package };
+        pkg = person.packages[position];
+      } else pkg = data.package;
+      return { person, pkg };
+    })().finally(() => state.adminTrackingDetailInflight.delete(key));
+    state.adminTrackingDetailInflight.set(key, task);
+    return task;
   }
 
   function adminPackageDetailHtml(pkg) {
@@ -1434,7 +1482,7 @@
     if (area) area.onchange = () => { state.adminCourseArea = area.value; state.adminCourseStore = ''; renderAdminCourses(); };
     if (status) status.onchange = () => { state.adminCourseStatus = status.value; renderAdminCourses(); };
     if (store) store.onchange = () => { state.adminCourseStore = store.value; renderAdminCourses(); };
-    if (search) search.oninput = () => { state.adminCourseSearch = search.value; renderAdminCourseResultList(); };
+    if (search) search.oninput = () => { state.adminCourseSearch = search.value; scheduleAdminCourseRender(); };
     if (sort) sort.onchange = () => { state.adminCourseSort = sort.value; renderAdminCourseResultList(); };
     document.querySelectorAll('[data-admin-course-status]').forEach(button => button.onclick = () => { state.adminCourseStatus = button.dataset.adminCourseStatus || ''; renderAdminCourses(); });
   }
@@ -2402,7 +2450,13 @@
       } else renderAdminManage();
     }
     if (tab === 'submissions') loadAdminSubmissions();
-    if (refresh && ['people', 'courses'].includes(tab)) ensureAdminOverview();
+    if (['people', 'courses'].includes(tab)) {
+      if (!state.overviewDirty) {
+        if (tab === 'courses') renderAdminCourses();
+        else renderAdminPeople();
+      }
+      if (refresh) ensureAdminOverview();
+    }
     if (persist) saveViewState({ view: 'admin', adminTab: tab, scrollY: 0 });
   }
 
@@ -2416,6 +2470,7 @@
       if (frame && !frame.dataset.loaded) { frame.src = frame.dataset.src || frame.src; frame.dataset.loaded = '1'; }
     }
     state.studentTab = tab;
+    if (tab === 'records') renderStudentRecords();
     if (tab === 'courses' && state.features.lazyDataV114 && !state.studentPackagesLoaded) {
       ensureStudentPackages().catch(error => showToast(error.message || '課程載入失敗'));
     }
@@ -2429,7 +2484,7 @@
     if (state.activeLessonId && !state.previewMode && state.tracker?.dirty) flushProgress(false).catch(() => {});
     stopTracker();
     stopIdleMonitor();
-    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.submissionDeleteChains.clear(); state.selectedAdminContentFile = null; state.apiConnected = false; state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null; state.adminOverviewLoading = null; state.adminPeopleArea = ''; state.adminPeopleCourseId = ''; state.adminPeopleStatus = ''; state.adminCourseId = ''; state.adminCourseArea = ''; state.adminCourseStatus = ''; state.adminCourseStore = ''; state.adminCourseSearch = ''; state.activePackageId = ''; state.activeLessonId = ''; state.previewMode = false; state.activeSubmission = null;
+    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.submissionDeleteChains.clear(); state.selectedAdminContentFile = null; state.apiConnected = false; state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null; state.adminOverviewLoading = null; state.studentLessonInflight.clear(); state.adminTrackingDetailInflight.clear(); state.adminPeopleArea = ''; state.adminPeopleCourseId = ''; state.adminPeopleStatus = ''; state.adminCourseId = ''; state.adminCourseArea = ''; state.adminCourseStatus = ''; state.adminCourseStore = ''; state.adminCourseSearch = ''; state.activePackageId = ''; state.activeLessonId = ''; state.previewMode = false; state.activeSubmission = null;
     clearSession();
     clearViewState();
     clearLastActivity();
@@ -2487,7 +2542,7 @@
     $('adminEditorOverlay').onclick = event => { if (event.target === $('adminEditorOverlay')) closeAdminEditor(); };
     document.querySelectorAll('[data-student-tab]').forEach(button => button.onclick = () => setStudentTab(button.dataset.studentTab));
     document.querySelectorAll('[data-admin-tab]').forEach(button => button.onclick = () => setAdminTab(button.dataset.adminTab));
-    $('adminSearch').oninput = renderAdminPeople;
+    $('adminSearch').oninput = scheduleAdminPeopleRender;
     ['pointerdown','keydown','touchstart'].forEach(name => document.addEventListener(name, () => recordActivity(), { passive: true }));
     window.addEventListener('focus', () => { if (!checkIdleNow()) recordActivity(); });
     window.addEventListener('pageshow', () => { if (!checkIdleNow()) recordActivity(); });
