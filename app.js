@@ -1401,8 +1401,9 @@
     const assigned = people.reduce((sum, person) => sum + (person.packages || []).length, 0);
     const done = people.reduce((sum, person) => sum + (person.packages || []).filter(pkg => packageSummary(pkg).status === 'complete').length, 0);
     const incomplete = Math.max(0, assigned - done);
+    const peopleLabel = isAreaManagerUser() ? '轄區人員' : '帳號';
     $('adminSummary').innerHTML = `
-      <article class="summary-card"><span>帳號</span><strong>${people.length}</strong></article>
+      <article class="summary-card"><span>${peopleLabel}</span><strong>${people.length}</strong></article>
       <article class="summary-card"><span>課程指派</span><strong>${assigned}</strong></article>
       <article class="summary-card"><span>未完成</span><strong>${incomplete}</strong></article>
       <article class="summary-card"><span>已完成</span><strong>${done}</strong></article>`;
