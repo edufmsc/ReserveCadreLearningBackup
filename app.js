@@ -1424,6 +1424,16 @@
     const courses = uniquePackagesForAdmin().sort((a,b) => clean(a.title).localeCompare(clean(b.title), 'zh-Hant'));
     if (state.adminPeopleCourseId && !courses.some(course => clean(course.id) === clean(state.adminPeopleCourseId))) state.adminPeopleCourseId = '';
 
+    const scopePeople = allPeople.filter(person => !state.adminPeopleArea || clean(person.area) === state.adminPeopleArea);
+    const scopePackagesFor = person => {
+      const packages = person?.packages || [];
+      return state.adminPeopleCourseId ? packages.filter(pkg => clean(pkg.id) === clean(state.adminPeopleCourseId)) : packages;
+    };
+    const scopeAssigned = scopePeople.reduce((sum, person) => sum + scopePackagesFor(person).length, 0);
+    const scopeComplete = scopePeople.reduce((sum, person) => sum + scopePackagesFor(person).filter(pkg => packageSummary(pkg).status === 'complete').length, 0);
+    const scopeIncomplete = Math.max(0, scopeAssigned - scopeComplete);
+    const scopeRate = scopeAssigned ? Math.round(scopeComplete * 100 / scopeAssigned) : 0;
+
     const people = allPeople.filter(person => {
       if (state.adminPeopleArea && clean(person.area) !== state.adminPeopleArea) return false;
       if (!adminPersonMatchesStatus(person)) return false;
@@ -1446,6 +1456,12 @@
             <option value="in_progress" ${state.adminPeopleStatus === 'in_progress' ? 'selected' : ''}>進行中</option>
             <option value="complete" ${state.adminPeopleStatus === 'complete' ? 'selected' : ''}>已完成</option>
           </select></label>
+        </div>
+        <div class="admin-course-summary-row">
+          <button type="button" class="admin-course-stat" tabindex="-1"><span>範圍人數</span><strong>${scopePeople.length}</strong></button>
+          <button type="button" class="admin-course-stat" tabindex="-1"><span>課程指派</span><strong>${scopeAssigned}</strong></button>
+          <button type="button" class="admin-course-stat" tabindex="-1"><span>未完成</span><strong>${scopeIncomplete}</strong></button>
+          <button type="button" class="admin-course-stat" tabindex="-1"><span>完成率</span><strong>${scopeRate}%</strong></button>
         </div>
         <p class="package-meta">目前顯示 ${people.length} 人｜其中 ${incompletePeople} 人仍有未完成課程</p>
       </section>`;
