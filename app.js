@@ -1457,7 +1457,7 @@
             <option value="complete" ${state.adminPeopleStatus === 'complete' ? 'selected' : ''}>已完成</option>
           </select></label>
         </div>
-        <div class="admin-course-summary-row">
+        <div class="admin-course-summary-row admin-people-summary-row">
           <button type="button" class="admin-course-stat" tabindex="-1"><span>範圍人數</span><strong>${scopePeople.length}</strong></button>
           <button type="button" class="admin-course-stat" tabindex="-1"><span>課程指派</span><strong>${scopeAssigned}</strong></button>
           <button type="button" class="admin-course-stat" tabindex="-1"><span>未完成</span><strong>${scopeIncomplete}</strong></button>
