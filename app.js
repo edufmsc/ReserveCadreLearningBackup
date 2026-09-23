@@ -1466,21 +1466,49 @@
         <p class="package-meta">目前顯示 ${people.length} 人｜其中 ${incompletePeople} 人仍有未完成課程</p>
       </section>`;
 
-    const rows = people.length ? people.map(person => {
-      const visiblePackages = adminPersonPackagesForFilter(person);
-      return `
-      <article class="accordion-card"><button class="accordion-toggle" type="button"><span class="accordion-title"><strong>${escapeHtml(person.name)}｜${escapeHtml(person.employeeId)}</strong><span>${escapeHtml(person.area)}｜${escapeHtml(person.store)}</span></span><span class="accordion-arrow">›</span></button>
-      <div class="accordion-content" hidden>${visiblePackages.map(pkg => renderAdminPersonPackage(person, pkg)).join('') || '<div class="manage-empty">目前沒有符合條件的課程</div>'}</div></article>`;
-    }).join('') : '<div class="empty-state"><h3>查無資料</h3><p>請調整轄區、課程、狀況或搜尋條件。</p></div>';
+    const rows = people.length ? people.map(person => `
+      <article class="accordion-card" data-admin-person-card="${escapeHtml(person.employeeId)}">
+        <button class="accordion-toggle" type="button" data-admin-person-toggle="${escapeHtml(person.employeeId)}">
+          <span class="accordion-title"><strong>${escapeHtml(person.name)}｜${escapeHtml(person.employeeId)}</strong><span>${escapeHtml(person.area)}｜${escapeHtml(person.store)}</span></span>
+          <span class="accordion-arrow">›</span>
+        </button>
+        <div class="accordion-content" data-admin-person-content="${escapeHtml(person.employeeId)}" data-loaded="0" hidden></div>
+      </article>`).join('') : '<div class="empty-state"><h3>查無資料</h3><p>請調整轄區、課程、狀況或搜尋條件。</p></div>';
 
     $('adminPeoplePanel').innerHTML = filters + rows;
     if ($('adminPeopleArea')) $('adminPeopleArea').onchange = () => { state.adminPeopleArea = $('adminPeopleArea').value; renderAdminPeople(); };
     if ($('adminPeopleCourse')) $('adminPeopleCourse').onchange = () => { state.adminPeopleCourseId = $('adminPeopleCourse').value; renderAdminPeople(); };
     if ($('adminPeopleStatus')) $('adminPeopleStatus').onchange = () => { state.adminPeopleStatus = $('adminPeopleStatus').value; renderAdminPeople(); };
-    bindAdminAccordions($('adminPeoplePanel'));
-    document.querySelectorAll('[data-force-complete]').forEach(button => button.onclick = () => forceCompletePackage(button));
-    document.querySelectorAll('[data-clear-force-complete]').forEach(button => button.onclick = () => clearForceCompletePackage(button));
-    $('adminPeoplePanel')?.querySelectorAll('[data-admin-tracking-detail]').forEach(button => button.onclick = () => toggleAdminTrackingDetail(button));
+    bindAdminPeopleRows($('adminPeoplePanel'));
+  }
+
+  function bindAdminPersonContent(content) {
+    content?.querySelectorAll('[data-force-complete]').forEach(button => button.onclick = () => forceCompletePackage(button));
+    content?.querySelectorAll('[data-clear-force-complete]').forEach(button => button.onclick = () => clearForceCompletePackage(button));
+    content?.querySelectorAll('[data-admin-tracking-detail]').forEach(button => button.onclick = () => toggleAdminTrackingDetail(button));
+  }
+
+  function bindAdminPeopleRows(root) {
+    root?.querySelectorAll('[data-admin-person-toggle]').forEach(button => {
+      button.onclick = () => {
+        const employeeId = clean(button.dataset.adminPersonToggle);
+        const card = button.closest('[data-admin-person-card]');
+        const content = card?.querySelector(':scope > [data-admin-person-content]');
+        if (!content) return;
+        const opening = content.hidden;
+        if (opening && content.dataset.loaded !== '1') {
+          const person = (state.adminOverview || []).find(x => clean(x.employeeId) === employeeId);
+          const visiblePackages = person ? adminPersonPackagesForFilter(person) : [];
+          content.innerHTML = person
+            ? (visiblePackages.map(pkg => renderAdminPersonPackage(person, pkg)).join('') || '<div class="manage-empty">目前沒有符合條件的課程</div>')
+            : '<div class="manage-empty">找不到人員資料</div>';
+          content.dataset.loaded = '1';
+          bindAdminPersonContent(content);
+        }
+        content.hidden = !content.hidden;
+        button.classList.toggle('is-open', !content.hidden);
+      };
+    });
   }
 
   async function ensureAdminTrackingDetail(employeeId, packageId) {
