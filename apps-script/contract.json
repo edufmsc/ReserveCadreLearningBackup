@@ -3,6 +3,8 @@
   "build": "V1.0",
   "actions": [
     "health",
+    "authWarm",
+    "loginStatus",
     "login",
     "logout",
     "bootstrap",
@@ -61,6 +63,15 @@
     "fastPathV1": true,
     "loginRetryV1": true,
     "splitReadV1": true,
-    "warmSnapshotV1": true
+    "warmSnapshotV1": true,
+    "stabilityCoreV1": true,
+    "idleLogoutV1": true,
+    "progressFastWriteV1": true,
+    "loginReliabilityV2": true,
+    "employeeWarmCacheV1": true,
+    "authWarmV1": true,
+    "loginStatusV1": true,
+    "progressSnapshotV1": true,
+    "adminTrackingFastV1": true
   }
 }
