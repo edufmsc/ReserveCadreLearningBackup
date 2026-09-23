@@ -40,3 +40,13 @@
 .admin-course-empty{margin-top:0}
 @media (max-width:900px){.admin-course-filter-grid{grid-template-columns:1fr 1fr}.admin-course-summary-row{grid-template-columns:1fr 1fr}}
 @media (max-width:600px){.admin-course-filter-grid{grid-template-columns:1fr}.admin-course-search-row{display:grid}.admin-course-summary-row{grid-template-columns:1fr 1fr}}
+
+
+/* V1.0 admin area / incomplete filters */
+.admin-people-filter-grid{display:grid;grid-template-columns:1fr 1.5fr 1.2fr;gap:10px;padding:14px;border:1px solid var(--line);border-radius:16px;background:#fff}
+.admin-people-filter-grid .field-group{margin:0}
+#adminPeoplePanel>.admin-course-filter-card{margin-bottom:11px}
+#adminPeoplePanel>.admin-course-filter-card>.package-meta{padding:0 14px 13px}
+.admin-course-filter-grid{grid-template-columns:2fr 1fr 1fr 1fr 1fr}
+@media (max-width:1000px){.admin-course-filter-grid{grid-template-columns:1fr 1fr 1fr}.admin-people-filter-grid{grid-template-columns:1fr 1fr}}
+@media (max-width:680px){.admin-course-filter-grid,.admin-people-filter-grid{grid-template-columns:1fr}}
