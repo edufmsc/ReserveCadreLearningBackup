@@ -38,6 +38,7 @@
     mediaObserver: null,
     adminTab: 'people',
     studentTab: 'courses',
+    areaManagerView: 'tracking',
     manageOpenPackages: new Set(),
     manageOpenLessons: new Set(),
     selectedSubmissionFiles: [],
@@ -93,6 +94,9 @@
   const n = value => Number.isFinite(Number(value)) ? Number(value) : 0;
   const clean = value => String(value ?? '').trim();
   const normalize = value => clean(value).toLowerCase();
+  const isAreaManagerUser = () => state.user?.roleKey === 'area_manager';
+  const isTrackingUser = () => state.user?.roleKey === 'admin' || isAreaManagerUser();
+  const isLearnerUser = () => state.user?.roleKey === 'student' || isAreaManagerUser();
 
   function configured() {
     return !!(window.LEARNING_CONFIG && /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:\?.*)?$/i.test(clean(window.LEARNING_CONFIG.API_URL)));
@@ -311,9 +315,10 @@
   function saveViewState(overrides = {}) {
     if (!state.token || !state.user) return;
     const lessonVisible = $('lessonPage') && !$('lessonPage').hidden;
-    const view = lessonVisible ? 'lesson' : state.user.roleKey === 'admin' ? 'admin' : 'student';
+    const view = lessonVisible ? 'lesson' : (state.user.roleKey === 'admin' || (isAreaManagerUser() && state.areaManagerView === 'tracking')) ? 'admin' : 'student';
     const value = {
       view,
+      areaManagerView: state.areaManagerView || 'tracking',
       activePackageId: state.activePackageId || '',
       activeLessonId: state.activeLessonId || '',
       adminTab: state.adminTab || 'people',
@@ -529,7 +534,7 @@
     state.mode = data.mode || state.mode || '';
     state.features = { ...state.features, ...(data.features || {}) };
     state.uploadConfig = { ...state.uploadConfig, ...(data.uploadConfig || {}) };
-    if (data.mode === 'admin') {
+    if (data.mode === 'admin' || data.mode === 'area_manager') {
       const hasOverview = Array.isArray(data.overview);
       const hasCatalog = !!data.catalog;
       state.adminOverview = hasOverview ? data.overview : [];
@@ -550,7 +555,7 @@
   }
 
   async function ensureStudentPackages(force = false) {
-    if (state.user?.roleKey === 'admin') return;
+    if (!isLearnerUser()) return;
     if (!force && state.studentPackagesLoaded) return;
     if (state.studentPackagesLoading) return state.studentPackagesLoading;
     const action = state.features.splitReadV1 ? 'studentHome' : 'studentPackages';
@@ -591,6 +596,7 @@
       if (state.adminTab === 'submissions') return loadAdminSubmissions();
       return ensureAdminOverview();
     }
+    if (isAreaManagerUser() && state.areaManagerView === 'tracking') return ensureAdminOverview();
     return ensureStudentPackages();
   }
 
@@ -689,6 +695,18 @@
       restoreScroll(saved.scrollY);
       return;
     }
+    if (isAreaManagerUser()) {
+      state.areaManagerView = saved.areaManagerView === 'student' || saved.view === 'student' || saved.view === 'lesson' ? 'student' : 'tracking';
+      if (state.areaManagerView === 'tracking') {
+        const tab = ['people','courses'].includes(saved.adminTab) ? saved.adminTab : 'people';
+        state.adminTab = tab;
+        setAreaManagerView('tracking', false);
+        await setAdminTab(tab, false, false);
+        restoreScroll(saved.scrollY);
+        return;
+      }
+      setAreaManagerView('student', false);
+    }
     state.studentTab = ['records','report'].includes(saved.studentTab) ? saved.studentTab : 'courses';
     if (saved.view === 'lesson' && saved.activePackageId && saved.activeLessonId) {
       const found = findStudentLesson(saved.activePackageId, saved.activeLessonId);
@@ -708,6 +726,39 @@
     restoreScroll(saved.scrollY);
   }
 
+  function configureTrackingRoleUi() {
+    const admin = state.user?.roleKey === 'admin';
+    const manager = isAreaManagerUser();
+    const manageButton = document.querySelector('[data-admin-tab="manage"]');
+    if (manageButton) manageButton.hidden = !admin;
+    ensureSubmissionTab();
+    const toggle = $('areaManagerViewToggle');
+    if (toggle) toggle.hidden = !manager;
+  }
+
+  function setAreaManagerView(view, persist = true) {
+    if (!isAreaManagerUser()) return;
+    state.areaManagerView = view === 'student' ? 'student' : 'tracking';
+    const tracking = state.areaManagerView === 'tracking';
+    const toggle = $('areaManagerViewToggle');
+    if (toggle) toggle.textContent = tracking ? '我的學習' : '轄區學習';
+    $('lessonPage').hidden = true;
+    $('studentDashboard').hidden = tracking;
+    $('adminDashboard').hidden = !tracking;
+    if (tracking) {
+      if (!['people','courses'].includes(state.adminTab)) state.adminTab = 'people';
+      renderAdmin();
+      setAdminTab(state.adminTab, false, false);
+      if (state.overviewDirty) ensureAdminOverview().catch(() => {});
+    } else {
+      renderStudent();
+      setStudentTab(state.studentTab || 'courses', false);
+      ensureStudentPackages().catch(error => showToast(error.message || '課程載入失敗'));
+    }
+    if (persist) saveViewState({ view: tracking ? 'admin' : 'student', areaManagerView: state.areaManagerView, scrollY: 0 });
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }
+
   function renderDashboard() {
     if ($('bootView')) $('bootView').hidden = true;
     $('loginView').hidden = true;
@@ -716,12 +767,14 @@
     $('userName').textContent = state.user?.name || '—';
     $('userRole').textContent = state.user?.role || '—';
     $('userMeta').textContent = `${state.user?.employeeId || '—'}｜${state.user?.area || '—'}｜${state.user?.store || '—'}`;
+    configureTrackingRoleUi();
     if (state.user?.roleKey === 'admin') {
       $('studentDashboard').hidden = true;
       $('adminDashboard').hidden = false;
-      ensureSubmissionTab();
       renderAdmin();
       setAdminTab(state.adminTab || 'people', false);
+    } else if (isAreaManagerUser()) {
+      setAreaManagerView(state.areaManagerView || 'tracking', false);
     } else {
       $('studentDashboard').hidden = false;
       $('adminDashboard').hidden = true;
@@ -1559,8 +1612,9 @@
 
   function renderAdminPersonPackage(person, pkg) {
     const summary = packageSummary(pkg);
-    const force = state.features.forceComplete && !pkg.forcedComplete && summary.status !== 'complete' ? `<button class="mini-button v1-force-button" type="button" data-force-complete data-employee-id="${escapeHtml(person.employeeId)}" data-package-id="${escapeHtml(pkg.id)}">強制通過</button>` : '';
-    const clearForce = state.features.forceComplete && pkg.forcedComplete ? `<button class="mini-button" type="button" data-clear-force-complete data-employee-id="${escapeHtml(person.employeeId)}" data-package-id="${escapeHtml(pkg.id)}">取消強制通過</button>` : '';
+    const canManage = state.user?.roleKey === 'admin';
+    const force = canManage && state.features.forceComplete && !pkg.forcedComplete && summary.status !== 'complete' ? `<button class="mini-button v1-force-button" type="button" data-force-complete data-employee-id="${escapeHtml(person.employeeId)}" data-package-id="${escapeHtml(pkg.id)}">強制通過</button>` : '';
+    const clearForce = canManage && state.features.forceComplete && pkg.forcedComplete ? `<button class="mini-button" type="button" data-clear-force-complete data-employee-id="${escapeHtml(person.employeeId)}" data-package-id="${escapeHtml(pkg.id)}">取消強制通過</button>` : '';
     const alreadyDetailed = Array.isArray(pkg.lessons);
     return `<div class="person-package"><div class="person-package__head"><button class="person-package__toggle" type="button" data-admin-tracking-detail data-employee-id="${escapeHtml(person.employeeId)}" data-package-id="${escapeHtml(pkg.id)}"><span><strong>${escapeHtml(pkg.title)}</strong><small>${pkg.forcedComplete ? `人工通過｜原實際進度 ${summary.done}/${summary.total}` : `${summary.done}/${summary.total} 完成`}</small></span>${statusTag(summary.status)}</button><div class="person-package__quick-actions">${force}${clearForce}</div></div><div class="person-package__body" ${alreadyDetailed ? 'data-loaded="1"' : ''} hidden>${alreadyDetailed ? adminPackageDetailHtml(pkg) : ''}</div></div>`;
   }
@@ -2299,7 +2353,7 @@
     const nav = $('adminDashboard')?.querySelector(':scope > .tab-bar');
     if (!nav) return;
     let button = nav.querySelector('[data-admin-tab="submissions"]');
-    if (!state.features.submissions) { button?.remove(); $('adminSubmissionPanel')?.remove(); return; }
+    if (state.user?.roleKey !== 'admin' || !state.features.submissions) { button?.remove(); $('adminSubmissionPanel')?.remove(); return; }
     if (!button) {
       button = document.createElement('button');
       button.className = 'tab-button'; button.type = 'button'; button.dataset.adminTab = 'submissions'; button.textContent = '作業回傳';
@@ -2561,6 +2615,7 @@
   }
 
   async function setAdminTab(tab, refresh = true, persist = true) {
+    if (isAreaManagerUser() && !['people','courses'].includes(tab)) tab = 'people';
     state.adminTab = tab;
     document.querySelectorAll('[data-admin-tab]').forEach(button => button.classList.toggle('is-active', button.dataset.adminTab === tab));
     $('adminTrackingPanel').hidden = !['people', 'courses'].includes(tab);
@@ -2610,7 +2665,7 @@
     if (state.activeLessonId && !state.previewMode && state.tracker?.dirty) flushProgress(false).catch(() => {});
     stopTracker();
     stopIdleMonitor();
-    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.submissionDeleteChains.clear(); state.selectedAdminContentFile = null; state.apiConnected = false; state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null; state.adminOverviewLoading = null; state.studentLessonInflight.clear(); state.adminTrackingDetailInflight.clear(); state.progressPending.clear(); state.progressSaveInflight.clear(); state.adminPeopleArea = ''; state.adminPeopleCourseId = ''; state.adminPeopleStatus = ''; state.adminCourseId = ''; state.adminCourseArea = ''; state.adminCourseStatus = ''; state.adminCourseStore = ''; state.adminCourseSearch = ''; state.activePackageId = ''; state.activeLessonId = ''; state.previewMode = false; state.activeSubmission = null;
+    state.token = ''; state.user = null; state.areaManagerView = 'tracking'; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.submissionDeleteChains.clear(); state.selectedAdminContentFile = null; state.apiConnected = false; state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null; state.adminOverviewLoading = null; state.studentLessonInflight.clear(); state.adminTrackingDetailInflight.clear(); state.progressPending.clear(); state.progressSaveInflight.clear(); state.adminPeopleArea = ''; state.adminPeopleCourseId = ''; state.adminPeopleStatus = ''; state.adminCourseId = ''; state.adminCourseArea = ''; state.adminCourseStatus = ''; state.adminCourseStore = ''; state.adminCourseSearch = ''; state.activePackageId = ''; state.activeLessonId = ''; state.previewMode = false; state.activeSubmission = null;
     clearSession();
     clearViewState();
     clearLastActivity();
@@ -2669,6 +2724,7 @@
     document.querySelectorAll('[data-student-tab]').forEach(button => button.onclick = () => setStudentTab(button.dataset.studentTab));
     document.querySelectorAll('[data-admin-tab]').forEach(button => button.onclick = () => setAdminTab(button.dataset.adminTab));
     $('adminSearch').oninput = scheduleAdminPeopleRender;
+    if ($('areaManagerViewToggle')) $('areaManagerViewToggle').onclick = () => setAreaManagerView(state.areaManagerView === 'tracking' ? 'student' : 'tracking');
     ['pointerdown','keydown','touchstart'].forEach(name => document.addEventListener(name, () => recordActivity(), { passive: true }));
     window.addEventListener('focus', () => {
       if (!checkIdleNow()) recordActivity();
