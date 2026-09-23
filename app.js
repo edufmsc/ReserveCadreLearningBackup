@@ -50,6 +50,11 @@
     adminCatalogLoaded: false,
     studentPackagesLoading: null,
     adminCatalogLoading: null,
+    adminOverviewLoading: null,
+    studentLessonInflight: new Map(),
+    adminTrackingDetailInflight: new Map(),
+    adminPeopleRenderFrame: 0,
+    adminCourseRenderFrame: 0,
     submissionDeleteChains: new Map(),
     apiConnected: false,
     connectionFailures: 0,
@@ -58,7 +63,11 @@
     sessionRestoreInFlight: null,
     authGeneration: 0,
     selectedAdminContentFile: null,
+    adminPeopleArea: '',
+    adminPeopleCourseId: '',
+    adminPeopleStatus: '',
     adminCourseId: '',
+    adminCourseArea: '',
     adminCourseStatus: '',
     adminCourseStore: '',
     adminCourseSearch: '',
@@ -140,6 +149,7 @@
         lastError = error;
         if (error?.name === 'AbortError') { const err = new Error('後端回應較慢，請稍候再試。'); err.code='TIMEOUT'; err.retryable=true; lastError=err; }
         else if (error instanceof TypeError && !error.code) { const err = new Error('目前網路連線不穩定，請稍候。'); err.code='NETWORK_ERROR'; err.retryable=true; lastError=err; }
+        if (isSessionExpiredError(lastError) && token && token === state.token && state.user) logout('expired');
         if (!retryable || isSessionExpiredError(lastError) || lastError.retryable === false || attempt === attempts - 1) throw lastError;
         await new Promise(resolve => setTimeout(resolve, 500 + attempt * 500));
       } finally { clearTimeout(timer); }
@@ -724,7 +734,7 @@
       <article class="summary-card"><span>課程完成</span><strong>${complete}/${state.packages.length}</strong></article>`;
     $('packageList').innerHTML = state.packages.length ? state.packages.map(renderPackageCard).join('') : (state.features.lazyDataV114 && !state.studentPackagesLoaded ? '<div class="empty-state"><h3>正在載入課程…</h3></div>' : '<div class="empty-state"><h3>目前沒有指派課程</h3></div>');
     bindStudentPackageEvents();
-    renderStudentRecords();
+    if (state.studentTab === 'records') renderStudentRecords();
   }
 
   function renderPackageCard(pkg) {
@@ -776,15 +786,22 @@
   async function ensureStudentLessonDetail(packageId, lessonId) {
     let found = findStudentLesson(packageId, lessonId);
     if (!state.features.splitReadV1 || found.lesson?.detailLoaded !== false) return found;
-    const data = await api('studentLesson', { lessonId }, state.token, { retry: true, timeout: 12000 });
-    const detail = data?.lesson;
-    if (!detail?.id) throw new Error('教材資料格式不完整');
-    const pkg = state.packages.find(x => x.id === (data.packageId || packageId));
-    if (!pkg) throw new Error('找不到課程');
-    const position = (pkg.lessons || []).findIndex(x => x.id === detail.id);
-    if (position < 0) throw new Error('找不到子課程');
-    pkg.lessons[position] = { ...pkg.lessons[position], ...detail, detailLoaded: true };
-    return { pkg, lesson: pkg.lessons[position] };
+    const key = clean(packageId) + '|' + clean(lessonId);
+    const inflight = state.studentLessonInflight.get(key);
+    if (inflight) return inflight;
+    const task = (async () => {
+      const data = await api('studentLesson', { lessonId }, state.token, { retry: true, timeout: 12000 });
+      const detail = data?.lesson;
+      if (!detail?.id) throw new Error('教材資料格式不完整');
+      const pkg = state.packages.find(x => x.id === (data.packageId || packageId));
+      if (!pkg) throw new Error('找不到課程');
+      const position = (pkg.lessons || []).findIndex(x => x.id === detail.id);
+      if (position < 0) throw new Error('找不到子課程');
+      pkg.lessons[position] = { ...pkg.lessons[position], ...detail, detailLoaded: true };
+      return { pkg, lesson: pkg.lessons[position] };
+    })().finally(() => state.studentLessonInflight.delete(key));
+    state.studentLessonInflight.set(key, task);
+    return task;
   }
 
   async function openLesson(packageId, lessonId) {
@@ -811,7 +828,6 @@
 
     if (lesson.status === 'not_started') {
       lesson.status = 'in_progress';
-      renderStudent();
       api('saveProgress', { lessonId: lesson.id, contentProgress: lesson.contentProgress || {} }).then(packages => {
         if (Array.isArray(packages)) state.packages = packages;
       }).catch(error => showToast(error.message || '開始紀錄寫入失敗'));
@@ -1014,7 +1030,10 @@
           const canvas = wrap.querySelector('canvas');
           canvas.width = Math.max(1, Math.floor(renderViewport.width));
           canvas.height = Math.max(1, Math.floor(renderViewport.height));
+          canvas.style.width = `${Math.max(1, Math.floor(baseViewport.width * cssScale))}px`;
+          canvas.style.height = `${Math.max(1, Math.floor(baseViewport.height * cssScale))}px`;
           await page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport: renderViewport }).promise;
+          wrap.style.minHeight = '';
           wrap.dataset.rendered = '1';
         } finally { wrap.dataset.rendering = '0'; }
       };
@@ -1022,21 +1041,32 @@
         if (entry.isIntersecting) renderPage(entry.target).catch(() => {});
       }), { root: host, rootMargin: '900px 0px', threshold: 0.01 });
       state.pdfPageObservers.add(observer);
+
+      const firstPage = await pdf.getPage(1);
+      const firstViewport = firstPage.getViewport({ scale: 1 });
+      const firstCssScale = Math.min(2, available / firstViewport.width);
+      const estimatedWidth = Math.max(1, Math.floor(firstViewport.width * firstCssScale));
+      const estimatedHeight = Math.max(1, Math.floor(firstViewport.height * firstCssScale));
+
       for (let pageNo = 1; pageNo <= pdf.numPages; pageNo++) {
-        const page = await pdf.getPage(pageNo);
-        const baseViewport = page.getViewport({ scale: 1 });
-        const cssScale = Math.min(2, available / baseViewport.width);
-        const cssWidth = Math.max(1, Math.floor(baseViewport.width * cssScale));
-        const cssHeight = Math.max(1, Math.floor(baseViewport.height * cssScale));
         const wrap = document.createElement('div');
-        wrap.className = 'pdf-page-wrap'; wrap.dataset.pageNo = String(pageNo);
-        const label = document.createElement('div'); label.className = 'pdf-page-label'; label.textContent = `第 ${pageNo} / ${pdf.numPages} 頁`;
-        const canvas = document.createElement('canvas'); canvas.className = 'pdf-page-canvas';
-        canvas.style.width = `${cssWidth}px`; canvas.style.height = `${cssHeight}px`;
+        wrap.className = 'pdf-page-wrap';
+        wrap.dataset.pageNo = String(pageNo);
+        wrap.style.minHeight = `${estimatedHeight + 30}px`;
+        const label = document.createElement('div');
+        label.className = 'pdf-page-label';
+        label.textContent = `第 ${pageNo} / ${pdf.numPages} 頁`;
+        const canvas = document.createElement('canvas');
+        canvas.className = 'pdf-page-canvas';
+        canvas.style.width = `${estimatedWidth}px`;
+        canvas.style.height = `${estimatedHeight}px`;
         canvas.addEventListener('contextmenu', event => event.preventDefault());
-        wrap.append(label, canvas); stack.appendChild(wrap); observer.observe(wrap);
+        wrap.append(label, canvas);
+        stack.appendChild(wrap);
+        observer.observe(wrap);
       }
-      const first = stack.querySelector('.pdf-page-wrap'); if (first) renderPage(first).catch(() => {});
+      const first = stack.querySelector('.pdf-page-wrap');
+      if (first) renderPage(first).catch(() => {});
     } catch (error) {
       block.dataset.loaded = '0';
       host.innerHTML = `<div class="content-placeholder">PDF 載入失敗：${escapeHtml(error.message || '請確認檔案權限')}</div>`;
@@ -1235,26 +1265,56 @@
     const people = state.adminOverview || [];
     const assigned = people.reduce((sum, person) => sum + (person.packages || []).length, 0);
     const done = people.reduce((sum, person) => sum + (person.packages || []).filter(pkg => packageSummary(pkg).status === 'complete').length, 0);
+    const incomplete = Math.max(0, assigned - done);
     $('adminSummary').innerHTML = `
       <article class="summary-card"><span>帳號</span><strong>${people.length}</strong></article>
       <article class="summary-card"><span>課程指派</span><strong>${assigned}</strong></article>
-      <article class="summary-card"><span>完成</span><strong>${done}</strong></article>`;
-    renderAdminPeople();
-    renderAdminCourses();
-    renderAdminManage();
+      <article class="summary-card"><span>未完成</span><strong>${incomplete}</strong></article>
+      <article class="summary-card"><span>已完成</span><strong>${done}</strong></article>`;
+    if (state.adminTab === 'courses') renderAdminCourses();
+    else if (state.adminTab === 'manage') {
+      if (state.adminCatalogLoaded) renderAdminManage();
+    } else if (state.adminTab === 'people') renderAdminPeople();
   }
 
   async function ensureAdminOverview() {
-    if (!state.overviewDirty) return;
+    if (!state.overviewDirty) return state.adminOverview;
+    if (state.adminOverviewLoading) return state.adminOverviewLoading;
     const panel = state.adminTab === 'courses' ? $('adminCoursesPanel') : $('adminPeoplePanel');
     if (panel) panel.innerHTML = '<div class="empty-state"><h3>更新學習紀錄中…</h3></div>';
-    try {
-      const action = state.features.splitReadV1 ? 'adminTracking' : 'adminOverview';
-      const data = await api(action, {}, state.token, { retry: true, timeout: 12000 });
-      state.adminOverview = Array.isArray(data.overview) ? data.overview : [];
-      state.overviewDirty = false;
-      renderAdmin();
-    } catch (error) { showToast(error.message || '無法更新學習紀錄'); }
+    const task = (async () => {
+      try {
+        const action = state.features.splitReadV1 ? 'adminTracking' : 'adminOverview';
+        const data = await api(action, {}, state.token, { retry: true, timeout: 12000 });
+        state.adminOverview = Array.isArray(data.overview) ? data.overview : [];
+        state.overviewDirty = false;
+        renderAdmin();
+        return state.adminOverview;
+      } catch (error) {
+        showToast(error.message || '無法更新學習紀錄');
+        throw error;
+      } finally {
+        state.adminOverviewLoading = null;
+      }
+    })();
+    state.adminOverviewLoading = task;
+    return task;
+  }
+
+  function scheduleAdminPeopleRender() {
+    if (state.adminPeopleRenderFrame) cancelAnimationFrame(state.adminPeopleRenderFrame);
+    state.adminPeopleRenderFrame = requestAnimationFrame(() => {
+      state.adminPeopleRenderFrame = 0;
+      if (state.adminTab === 'people') renderAdminPeople();
+    });
+  }
+
+  function scheduleAdminCourseRender() {
+    if (state.adminCourseRenderFrame) cancelAnimationFrame(state.adminCourseRenderFrame);
+    state.adminCourseRenderFrame = requestAnimationFrame(() => {
+      state.adminCourseRenderFrame = 0;
+      if (state.adminTab === 'courses') renderAdminCourseResultList();
+    });
   }
 
   function matchesAdminSearch(value) {
@@ -1262,11 +1322,63 @@
     return !q || normalize(value).includes(q);
   }
 
+  function adminPersonPackagesForFilter(person) {
+    let packages = person?.packages || [];
+    if (state.adminPeopleCourseId) packages = packages.filter(pkg => clean(pkg.id) === clean(state.adminPeopleCourseId));
+    if (state.adminPeopleStatus === 'incomplete') packages = packages.filter(pkg => packageSummary(pkg).status !== 'complete');
+    else if (state.adminPeopleStatus) packages = packages.filter(pkg => packageSummary(pkg).status === state.adminPeopleStatus);
+    return packages;
+  }
+
+  function adminPersonMatchesStatus(person) {
+    if (!state.adminPeopleCourseId && !state.adminPeopleStatus) return true;
+    return adminPersonPackagesForFilter(person).length > 0;
+  }
+
   function renderAdminPeople() {
-    const people = (state.adminOverview || []).filter(person => matchesAdminSearch(`${person.employeeId} ${person.name} ${person.store} ${(person.packages || []).map(x => x.title).join(' ')}`));
-    $('adminPeoplePanel').innerHTML = people.length ? people.map(person => `
+    const allPeople = state.adminOverview || [];
+    const areas = [...new Set(allPeople.map(person => clean(person.area)).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'zh-Hant'));
+    if (state.adminPeopleArea && !areas.includes(state.adminPeopleArea)) state.adminPeopleArea = '';
+    const courses = uniquePackagesForAdmin().sort((a,b) => clean(a.title).localeCompare(clean(b.title), 'zh-Hant'));
+    if (state.adminPeopleCourseId && !courses.some(course => clean(course.id) === clean(state.adminPeopleCourseId))) state.adminPeopleCourseId = '';
+
+    const people = allPeople.filter(person => {
+      if (state.adminPeopleArea && clean(person.area) !== state.adminPeopleArea) return false;
+      if (!adminPersonMatchesStatus(person)) return false;
+      const visiblePackages = adminPersonPackagesForFilter(person);
+      return matchesAdminSearch(`${person.employeeId} ${person.name} ${person.area} ${person.store} ${visiblePackages.map(x => x.title).join(' ')}`);
+    });
+    const incompletePeople = people.filter(person => adminPersonPackagesForFilter(person).some(pkg => packageSummary(pkg).status !== 'complete')).length;
+
+    const areaOptions = areas.map(area => `<option value="${escapeHtml(area)}" ${area === state.adminPeopleArea ? 'selected' : ''}>${escapeHtml(area)}</option>`).join('');
+    const courseOptions = courses.map(course => `<option value="${escapeHtml(course.id)}" ${course.id === state.adminPeopleCourseId ? 'selected' : ''}>${escapeHtml(course.title)}</option>`).join('');
+    const filters = `
+      <section class="admin-course-filter-card">
+        <div class="admin-people-filter-grid">
+          <label class="field-group"><span>轄區</span><select id="adminPeopleArea"><option value="">全部轄區</option>${areaOptions}</select></label>
+          <label class="field-group"><span>課程</span><select id="adminPeopleCourse"><option value="">全部課程</option>${courseOptions}</select></label>
+          <label class="field-group"><span>課程狀況</span><select id="adminPeopleStatus">
+            <option value="" ${!state.adminPeopleStatus ? 'selected' : ''}>全部狀況</option>
+            <option value="incomplete" ${state.adminPeopleStatus === 'incomplete' ? 'selected' : ''}>未完成（未開始＋進行中）</option>
+            <option value="not_started" ${state.adminPeopleStatus === 'not_started' ? 'selected' : ''}>未開始</option>
+            <option value="in_progress" ${state.adminPeopleStatus === 'in_progress' ? 'selected' : ''}>進行中</option>
+            <option value="complete" ${state.adminPeopleStatus === 'complete' ? 'selected' : ''}>已完成</option>
+          </select></label>
+        </div>
+        <p class="package-meta">目前顯示 ${people.length} 人｜其中 ${incompletePeople} 人仍有未完成課程</p>
+      </section>`;
+
+    const rows = people.length ? people.map(person => {
+      const visiblePackages = adminPersonPackagesForFilter(person);
+      return `
       <article class="accordion-card"><button class="accordion-toggle" type="button"><span class="accordion-title"><strong>${escapeHtml(person.name)}｜${escapeHtml(person.employeeId)}</strong><span>${escapeHtml(person.area)}｜${escapeHtml(person.store)}</span></span><span class="accordion-arrow">›</span></button>
-      <div class="accordion-content" hidden>${(person.packages || []).map(pkg => renderAdminPersonPackage(person, pkg)).join('') || '<div class="manage-empty">目前沒有指派課程</div>'}</div></article>`).join('') : '<div class="empty-state"><h3>查無資料</h3></div>';
+      <div class="accordion-content" hidden>${visiblePackages.map(pkg => renderAdminPersonPackage(person, pkg)).join('') || '<div class="manage-empty">目前沒有符合條件的課程</div>'}</div></article>`;
+    }).join('') : '<div class="empty-state"><h3>查無資料</h3><p>請調整轄區、課程、狀況或搜尋條件。</p></div>';
+
+    $('adminPeoplePanel').innerHTML = filters + rows;
+    if ($('adminPeopleArea')) $('adminPeopleArea').onchange = () => { state.adminPeopleArea = $('adminPeopleArea').value; renderAdminPeople(); };
+    if ($('adminPeopleCourse')) $('adminPeopleCourse').onchange = () => { state.adminPeopleCourseId = $('adminPeopleCourse').value; renderAdminPeople(); };
+    if ($('adminPeopleStatus')) $('adminPeopleStatus').onchange = () => { state.adminPeopleStatus = $('adminPeopleStatus').value; renderAdminPeople(); };
     bindAdminAccordions($('adminPeoplePanel'));
     document.querySelectorAll('[data-force-complete]').forEach(button => button.onclick = () => forceCompletePackage(button));
     document.querySelectorAll('[data-clear-force-complete]').forEach(button => button.onclick = () => clearForceCompletePackage(button));
@@ -1277,14 +1389,21 @@
     const person = (state.adminOverview || []).find(x => clean(x.employeeId) === clean(employeeId));
     let pkg = (person?.packages || []).find(x => clean(x.id) === clean(packageId));
     if (!state.features.splitReadV1 || Array.isArray(pkg?.lessons)) return { person, pkg };
-    const data = await api('adminTrackingDetail', { employeeId, packageId }, state.token, { retry: true, timeout: 12000 });
-    if (!data?.package) throw new Error('找不到課程細項');
-    if (person) {
-      const position = (person.packages || []).findIndex(x => clean(x.id) === clean(packageId));
-      if (position >= 0) person.packages[position] = { ...person.packages[position], ...data.package };
-      pkg = person.packages[position];
-    } else pkg = data.package;
-    return { person, pkg };
+    const key = clean(employeeId) + '|' + clean(packageId);
+    const inflight = state.adminTrackingDetailInflight.get(key);
+    if (inflight) return inflight;
+    const task = (async () => {
+      const data = await api('adminTrackingDetail', { employeeId, packageId }, state.token, { retry: true, timeout: 12000 });
+      if (!data?.package) throw new Error('找不到課程細項');
+      if (person) {
+        const position = (person.packages || []).findIndex(x => clean(x.id) === clean(packageId));
+        if (position >= 0) person.packages[position] = { ...person.packages[position], ...data.package };
+        pkg = person.packages[position];
+      } else pkg = data.package;
+      return { person, pkg };
+    })().finally(() => state.adminTrackingDetailInflight.delete(key));
+    state.adminTrackingDetailInflight.set(key, task);
+    return task;
   }
 
   function adminPackageDetailHtml(pkg) {
@@ -1358,11 +1477,12 @@
   }
 
   function bindAdminCourseViewEvents() {
-    const course = $('adminCourseSelect'), status = $('adminCourseStatus'), store = $('adminCourseStore'), search = $('adminCourseSearch'), sort = $('adminCourseSort');
-    if (course) course.onchange = () => { state.adminCourseId = course.value; state.adminCourseStatus = ''; state.adminCourseStore = ''; state.adminCourseSearch = ''; renderAdminCourses(); };
+    const course = $('adminCourseSelect'), area = $('adminCourseArea'), status = $('adminCourseStatus'), store = $('adminCourseStore'), search = $('adminCourseSearch'), sort = $('adminCourseSort');
+    if (course) course.onchange = () => { state.adminCourseId = course.value; state.adminCourseArea = ''; state.adminCourseStatus = ''; state.adminCourseStore = ''; state.adminCourseSearch = ''; renderAdminCourses(); };
+    if (area) area.onchange = () => { state.adminCourseArea = area.value; state.adminCourseStore = ''; renderAdminCourses(); };
     if (status) status.onchange = () => { state.adminCourseStatus = status.value; renderAdminCourses(); };
     if (store) store.onchange = () => { state.adminCourseStore = store.value; renderAdminCourses(); };
-    if (search) search.oninput = () => { state.adminCourseSearch = search.value; renderAdminCourseResultList(); };
+    if (search) search.oninput = () => { state.adminCourseSearch = search.value; scheduleAdminCourseRender(); };
     if (sort) sort.onchange = () => { state.adminCourseSort = sort.value; renderAdminCourseResultList(); };
     document.querySelectorAll('[data-admin-course-status]').forEach(button => button.onclick = () => { state.adminCourseStatus = button.dataset.adminCourseStatus || ''; renderAdminCourses(); });
   }
@@ -1371,7 +1491,9 @@
     if (!state.adminCourseId) return [];
     const q = normalize(state.adminCourseSearch);
     let rows = adminCourseRows(state.adminCourseId).filter(({ person, summary }) => {
-      if (state.adminCourseStatus && summary.status !== state.adminCourseStatus) return false;
+      if (state.adminCourseArea && clean(person.area) !== state.adminCourseArea) return false;
+      if (state.adminCourseStatus === 'incomplete' && summary.status === 'complete') return false;
+      if (state.adminCourseStatus && state.adminCourseStatus !== 'incomplete' && summary.status !== state.adminCourseStatus) return false;
       if (state.adminCourseStore && clean(person.store) !== state.adminCourseStore) return false;
       return !q || normalize(`${person.employeeId} ${person.name} ${person.store} ${person.area}`).includes(q);
     });
@@ -1401,12 +1523,20 @@
     const packages = uniquePackagesForAdmin().sort((a,b) => clean(a.title).localeCompare(clean(b.title), 'zh-Hant'));
     if (state.adminCourseId && !packages.some(x => x.id === state.adminCourseId)) state.adminCourseId = '';
     const selectedRows = state.adminCourseId ? adminCourseRows(state.adminCourseId) : [];
-    const stores = [...new Set(selectedRows.map(x => clean(x.person.store)).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'zh-Hant'));
+    const areas = [...new Set(selectedRows.map(x => clean(x.person.area)).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'zh-Hant'));
+    if (state.adminCourseArea && !areas.includes(state.adminCourseArea)) state.adminCourseArea = '';
+    const areaRows = state.adminCourseArea ? selectedRows.filter(x => clean(x.person.area) === state.adminCourseArea) : selectedRows;
+    const stores = [...new Set(areaRows.map(x => clean(x.person.store)).filter(Boolean))].sort((a,b) => a.localeCompare(b, 'zh-Hant'));
     if (state.adminCourseStore && !stores.includes(state.adminCourseStore)) state.adminCourseStore = '';
-    const counts = { all: selectedRows.length, not_started: 0, in_progress: 0, complete: 0 };
-    selectedRows.forEach(x => { if (Object.prototype.hasOwnProperty.call(counts, x.summary.status)) counts[x.summary.status]++; });
+    const scopedRows = state.adminCourseStore ? areaRows.filter(x => clean(x.person.store) === state.adminCourseStore) : areaRows;
+    const counts = { all: scopedRows.length, incomplete: 0, not_started: 0, in_progress: 0, complete: 0 };
+    scopedRows.forEach(x => {
+      if (x.summary.status !== 'complete') counts.incomplete++;
+      if (Object.prototype.hasOwnProperty.call(counts, x.summary.status)) counts[x.summary.status]++;
+    });
     const options = packages.map(pkg => `<option value="${escapeHtml(pkg.id)}" ${pkg.id === state.adminCourseId ? 'selected' : ''}>${escapeHtml(pkg.title)}</option>`).join('');
-    host.innerHTML = `<section class="admin-course-filter-card"><div class="admin-course-filter-grid"><label class="field-group"><span>課程</span><select id="adminCourseSelect"><option value="">請先選擇課程</option>${options}</select></label><label class="field-group"><span>狀態</span><select id="adminCourseStatus" ${state.adminCourseId ? '' : 'disabled'}><option value="" ${!state.adminCourseStatus ? 'selected' : ''}>全部狀態</option><option value="not_started" ${state.adminCourseStatus === 'not_started' ? 'selected' : ''}>未開始</option><option value="in_progress" ${state.adminCourseStatus === 'in_progress' ? 'selected' : ''}>進行中</option><option value="complete" ${state.adminCourseStatus === 'complete' ? 'selected' : ''}>已完成</option></select></label><label class="field-group"><span>店別</span><select id="adminCourseStore" ${state.adminCourseId ? '' : 'disabled'}><option value="">全部店別</option>${stores.map(store => `<option value="${escapeHtml(store)}" ${store === state.adminCourseStore ? 'selected' : ''}>${escapeHtml(store)}</option>`).join('')}</select></label><label class="field-group"><span>排序</span><select id="adminCourseSort" ${state.adminCourseId ? '' : 'disabled'}><option value="attention" ${state.adminCourseSort === 'attention' ? 'selected' : ''}>需追蹤優先</option><option value="store" ${state.adminCourseSort === 'store' ? 'selected' : ''}>店別</option><option value="name" ${state.adminCourseSort === 'name' ? 'selected' : ''}>姓名</option><option value="employee" ${state.adminCourseSort === 'employee' ? 'selected' : ''}>帳號</option></select></label></div>${state.adminCourseId ? `<div class="admin-course-summary-row"><button type="button" class="admin-course-stat ${!state.adminCourseStatus ? 'is-active' : ''}" data-admin-course-status=""><span>指派</span><strong>${counts.all}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'not_started' ? 'is-active' : ''}" data-admin-course-status="not_started"><span>未開始</span><strong>${counts.not_started}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'in_progress' ? 'is-active' : ''}" data-admin-course-status="in_progress"><span>進行中</span><strong>${counts.in_progress}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'complete' ? 'is-active' : ''}" data-admin-course-status="complete"><span>已完成</span><strong>${counts.complete}</strong></button></div><div class="admin-course-search-row"><input id="adminCourseSearch" type="search" value="${escapeHtml(state.adminCourseSearch)}" placeholder="搜尋帳號、姓名或店別"><span id="adminCourseResultCount" class="package-meta"></span></div><p class="form-hint">預設將「未開始 → 進行中 → 已完成」排在前面；點人員後才載入子課程細項，避免一次展開大量資料。</p><div id="adminCourseResultList" class="admin-course-result-list"></div>` : '<div class="empty-state admin-course-empty"><h3>請先選擇要查看的課程</h3><p>選定後可依狀態、店別、帳號或姓名快速篩選。</p></div>'}</section>`;
+    const areaOptions = areas.map(area => `<option value="${escapeHtml(area)}" ${area === state.adminCourseArea ? 'selected' : ''}>${escapeHtml(area)}</option>`).join('');
+    host.innerHTML = `<section class="admin-course-filter-card"><div class="admin-course-filter-grid"><label class="field-group"><span>課程</span><select id="adminCourseSelect"><option value="">請先選擇課程</option>${options}</select></label><label class="field-group"><span>轄區</span><select id="adminCourseArea" ${state.adminCourseId ? '' : 'disabled'}><option value="">全部轄區</option>${areaOptions}</select></label><label class="field-group"><span>狀態</span><select id="adminCourseStatus" ${state.adminCourseId ? '' : 'disabled'}><option value="" ${!state.adminCourseStatus ? 'selected' : ''}>全部狀態</option><option value="incomplete" ${state.adminCourseStatus === 'incomplete' ? 'selected' : ''}>未完成</option><option value="not_started" ${state.adminCourseStatus === 'not_started' ? 'selected' : ''}>未開始</option><option value="in_progress" ${state.adminCourseStatus === 'in_progress' ? 'selected' : ''}>進行中</option><option value="complete" ${state.adminCourseStatus === 'complete' ? 'selected' : ''}>已完成</option></select></label><label class="field-group"><span>店別</span><select id="adminCourseStore" ${state.adminCourseId ? '' : 'disabled'}><option value="">全部店別</option>${stores.map(store => `<option value="${escapeHtml(store)}" ${store === state.adminCourseStore ? 'selected' : ''}>${escapeHtml(store)}</option>`).join('')}</select></label><label class="field-group"><span>排序</span><select id="adminCourseSort" ${state.adminCourseId ? '' : 'disabled'}><option value="attention" ${state.adminCourseSort === 'attention' ? 'selected' : ''}>需追蹤優先</option><option value="store" ${state.adminCourseSort === 'store' ? 'selected' : ''}>店別</option><option value="name" ${state.adminCourseSort === 'name' ? 'selected' : ''}>姓名</option><option value="employee" ${state.adminCourseSort === 'employee' ? 'selected' : ''}>帳號</option></select></label></div>${state.adminCourseId ? `<div class="admin-course-summary-row"><button type="button" class="admin-course-stat ${!state.adminCourseStatus ? 'is-active' : ''}" data-admin-course-status=""><span>指派</span><strong>${counts.all}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'incomplete' ? 'is-active' : ''}" data-admin-course-status="incomplete"><span>未完成</span><strong>${counts.incomplete}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'not_started' ? 'is-active' : ''}" data-admin-course-status="not_started"><span>未開始</span><strong>${counts.not_started}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'in_progress' ? 'is-active' : ''}" data-admin-course-status="in_progress"><span>進行中</span><strong>${counts.in_progress}</strong></button><button type="button" class="admin-course-stat ${state.adminCourseStatus === 'complete' ? 'is-active' : ''}" data-admin-course-status="complete"><span>已完成</span><strong>${counts.complete}</strong></button></div><div class="admin-course-search-row"><input id="adminCourseSearch" type="search" value="${escapeHtml(state.adminCourseSearch)}" placeholder="搜尋帳號、姓名、店別或轄區"><span id="adminCourseResultCount" class="package-meta"></span></div><p class="form-hint">統計數字會依目前轄區／店別範圍更新；點人員後才載入子課程細項，避免一次展開大量資料。</p><div id="adminCourseResultList" class="admin-course-result-list"></div>` : '<div class="empty-state admin-course-empty"><h3>請先選擇要查看的課程</h3><p>選定後可依轄區、狀態、店別、帳號或姓名快速篩選。</p></div>'}</section>`;
     bindAdminCourseViewEvents();
     if (state.adminCourseId) renderAdminCourseResultList();
   }
@@ -2320,7 +2450,13 @@
       } else renderAdminManage();
     }
     if (tab === 'submissions') loadAdminSubmissions();
-    if (refresh && ['people', 'courses'].includes(tab)) ensureAdminOverview();
+    if (['people', 'courses'].includes(tab)) {
+      if (!state.overviewDirty) {
+        if (tab === 'courses') renderAdminCourses();
+        else renderAdminPeople();
+      }
+      if (refresh) ensureAdminOverview();
+    }
     if (persist) saveViewState({ view: 'admin', adminTab: tab, scrollY: 0 });
   }
 
@@ -2334,6 +2470,7 @@
       if (frame && !frame.dataset.loaded) { frame.src = frame.dataset.src || frame.src; frame.dataset.loaded = '1'; }
     }
     state.studentTab = tab;
+    if (tab === 'records') renderStudentRecords();
     if (tab === 'courses' && state.features.lazyDataV114 && !state.studentPackagesLoaded) {
       ensureStudentPackages().catch(error => showToast(error.message || '課程載入失敗'));
     }
@@ -2347,7 +2484,7 @@
     if (state.activeLessonId && !state.previewMode && state.tracker?.dirty) flushProgress(false).catch(() => {});
     stopTracker();
     stopIdleMonitor();
-    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.submissionDeleteChains.clear(); state.selectedAdminContentFile = null; state.apiConnected = false; state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null; state.activePackageId = ''; state.activeLessonId = ''; state.previewMode = false; state.activeSubmission = null;
+    state.token = ''; state.user = null; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.submissionDeleteChains.clear(); state.selectedAdminContentFile = null; state.apiConnected = false; state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null; state.adminOverviewLoading = null; state.studentLessonInflight.clear(); state.adminTrackingDetailInflight.clear(); state.adminPeopleArea = ''; state.adminPeopleCourseId = ''; state.adminPeopleStatus = ''; state.adminCourseId = ''; state.adminCourseArea = ''; state.adminCourseStatus = ''; state.adminCourseStore = ''; state.adminCourseSearch = ''; state.activePackageId = ''; state.activeLessonId = ''; state.previewMode = false; state.activeSubmission = null;
     clearSession();
     clearViewState();
     clearLastActivity();
@@ -2405,7 +2542,7 @@
     $('adminEditorOverlay').onclick = event => { if (event.target === $('adminEditorOverlay')) closeAdminEditor(); };
     document.querySelectorAll('[data-student-tab]').forEach(button => button.onclick = () => setStudentTab(button.dataset.studentTab));
     document.querySelectorAll('[data-admin-tab]').forEach(button => button.onclick = () => setAdminTab(button.dataset.adminTab));
-    $('adminSearch').oninput = renderAdminPeople;
+    $('adminSearch').oninput = scheduleAdminPeopleRender;
     ['pointerdown','keydown','touchstart'].forEach(name => document.addEventListener(name, () => recordActivity(), { passive: true }));
     window.addEventListener('focus', () => { if (!checkIdleNow()) recordActivity(); });
     window.addEventListener('pageshow', () => { if (!checkIdleNow()) recordActivity(); });
