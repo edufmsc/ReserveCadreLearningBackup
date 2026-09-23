@@ -85,12 +85,14 @@
     return !!(window.LEARNING_CONFIG && /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:\?.*)?$/i.test(clean(window.LEARNING_CONFIG.API_URL)));
   }
 
-  const SAFE_RETRY_ACTIONS = new Set(['health','bootstrap','studentPackages','studentHome','studentLesson','adminOverview','adminTracking','adminTrackingDetail','adminCatalog','getSubmission','adminSubmissions','getPdfContent','exportProgress']);
+  const SAFE_RETRY_ACTIONS = new Set(['health','authWarm','loginStatus','bootstrap','studentPackages','studentHome','studentLesson','adminOverview','adminTracking','adminTrackingDetail','adminCatalog','getSubmission','adminSubmissions','getPdfContent','exportProgress']);
 
   function actionTimeout(action) {
-    if (action === 'health') return 12000;
+    if (action === 'health') return 8000;
+    if (action === 'authWarm') return 8000;
+    if (action === 'loginStatus') return 5000;
     if (action === 'bootstrap') return 12000;
-    if (action === 'login') return 18000;
+    if (action === 'login') return 12000;
     if (['studentPackages','studentHome','studentLesson','adminOverview','adminTracking','adminTrackingDetail','adminCatalog','getSubmission','adminSubmissions','exportProgress'].includes(action)) return 12000;
     return 20000;
   }
@@ -461,10 +463,14 @@
     if (state.loginPreflightPromise) return state.loginPreflightPromise;
     if (state.loginPreflightDone || !configured() || navigator.onLine === false) return Promise.resolve(false);
     setModeBadge('checking', '後端預熱中');
-    const task = api('health', {}, '', { retry: false, timeout: 9000 })
+    const task = api('authWarm', {}, '', { retry: false, timeout: 8000 })
+      .catch(error => error?.code === 'UNKNOWN_ACTION'
+        ? api('health', {}, '', { retry: false, timeout: 8000 })
+        : Promise.reject(error))
       .then(data => {
         if (data?.features) state.features = { ...state.features, ...data.features };
         state.loginPreflightDone = true;
+        setModeBadge('online', '後端已就緒');
         return !!data?.ok;
       })
       .catch(() => false)
@@ -476,8 +482,25 @@
   async function waitLoginPreflight() {
     const task = state.loginPreflightPromise;
     if (!task) return;
-    await Promise.race([task, new Promise(resolve => setTimeout(resolve, 2600))]);
+    await Promise.race([task, new Promise(resolve => setTimeout(resolve, 1800))]);
   }
+
+  async function recoverLoginResult(payload, generation, maxWaitMs = 5000) {
+    const end = Date.now() + maxWaitMs;
+    while (Date.now() < end) {
+      if (generation !== state.authGeneration) return null;
+      await new Promise(resolve => setTimeout(resolve, 700));
+      try {
+        const status = await api('loginStatus', { employeeId: payload.employeeId, requestId: payload.requestId }, '', { retry: false, timeout: 3500 });
+        if (status?.status === 'done' && status.login?.sessionToken) return status.login;
+        if (status?.status === 'missing') return null;
+      } catch (error) {
+        if (error?.code === 'UNKNOWN_ACTION') return null;
+      }
+    }
+    return null;
+  }
+
   function startConnectionMonitor() {
     if (state.healthCheckTimer) { clearInterval(state.healthCheckTimer); state.healthCheckTimer = null; }
     window.addEventListener('online', () => setModeBadge('checking', state.token ? '網路已恢復' : '待登入'));
@@ -560,30 +583,35 @@
     await waitLoginPreflight();
     const requestId = `L${Date.now().toString(36)}${Math.random().toString(36).slice(2,10)}`;
     const payload = { employeeId: account, password, requestId };
-    const retryableCodes = new Set(['TIMEOUT','NETWORK_ERROR','NON_JSON_RESPONSE','LOGIN_IN_PROGRESS']);
-    const plans = [18000, 16000, 22000];
+    const transientCodes = new Set(['TIMEOUT','NETWORK_ERROR','NON_JSON_RESPONSE','LOGIN_IN_PROGRESS']);
     let data = null;
-    let lastError = null;
-    for (let attempt = 0; attempt < plans.length; attempt++) {
-      if (generation !== state.authGeneration) return false;
-      if (attempt > 0) {
-        setModeBadge('checking', `後端正在啟動｜自動續登入 ${attempt + 1}/${plans.length}`);
-        await new Promise(resolve => setTimeout(resolve, loginRetryDelay(account, attempt)));
-      }
+    let firstError = null;
+
+    try {
+      data = await api('login', payload, '', { timeout: 12000, retry: false });
+    } catch (error) {
+      firstError = error;
+      if (!transientCodes.has(error?.code || '') || generation !== state.authGeneration) throw error;
+      setModeBadge('checking', '正在確認登入結果');
+      data = await recoverLoginResult(payload, generation, 5000);
+    }
+
+    if (!data && generation === state.authGeneration) {
+      setModeBadge('checking', '後端連線較慢｜自動續接');
+      await new Promise(resolve => setTimeout(resolve, loginRetryDelay(account, 1)));
       try {
-        data = await api('login', payload, '', { timeout: plans[attempt], retry: false });
-        break;
+        data = await api('login', payload, '', { timeout: 14000, retry: false });
       } catch (error) {
-        lastError = error;
-        if (!retryableCodes.has(error?.code || '') || attempt === plans.length - 1) throw error;
+        if (!transientCodes.has(error?.code || '')) throw error;
+        data = await recoverLoginResult(payload, generation, 4500);
+        if (!data) throw error;
       }
     }
-    if (!data) throw lastError || new Error('登入未完成。');
-    if (generation !== state.authGeneration) {
-      if (data?.sessionToken) api('logout', {}, data.sessionToken, { timeout: 5000, retry: false }).catch(() => {});
-      return false;
-    }
+
+    if (!data) throw firstError || new Error('登入未完成。');
+    if (generation !== state.authGeneration) return false;
     state.token = data.sessionToken;
+    state.loginPreflightDone = true;
     saveSession();
     const bootstrap = data.bootstrap || await api('bootstrap', {}, state.token, { retry: true, timeout: 12000 });
     if (generation !== state.authGeneration) return false;
@@ -2322,9 +2350,12 @@
     }
     setModeBadge(navigator.onLine === false ? 'offline' : 'checking', navigator.onLine === false ? '裝置離線' : '待登入');
     window.scrollTo({ top: 0, behavior: 'auto' });
-    // Idle logout deliberately skips a backend logout request: clearing the client token
-    // stops all future calls immediately and avoids creating a synchronized idle-logout spike.
-    if (token && reason === 'manual') api('logout', {}, token, { timeout: 10000, retry: false }).catch(() => {});
+    // Logout is client-immediate. Avoid a GAS logout request here: the old-session cleanup
+    // can otherwise contend with a user who signs back in immediately. The local token is
+    // discarded now and the server copy expires automatically.
+    state.loginPreflightDone = false;
+    state.loginPreflightPromise = null;
+    startLoginPreflight();
   }
 
   function bindStaticEvents() {
@@ -2337,7 +2368,7 @@
         state.token = '';
         if (isSessionExpiredError(error)) clearSession();
         const transient = ['TIMEOUT','NETWORK_ERROR','NON_JSON_RESPONSE','LOGIN_IN_PROGRESS'].includes(error?.code || '');
-        $('loginMessage').textContent = transient ? '後端目前仍忙碌，系統已自動重試仍未完成；請稍候約 5 秒後再試一次。' : (error.message || '登入失敗');
+        $('loginMessage').textContent = transient ? '後端目前連線較慢，請稍候數秒後再登入；系統會持續預熱後端。' : (error.message || '登入失敗');
         $('loginMessage').hidden = false;
         if (transient) { state.loginPreflightDone = false; startLoginPreflight(); }
       }
