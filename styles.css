@@ -50,3 +50,6 @@
 .admin-course-filter-grid{grid-template-columns:2fr 1fr 1fr 1fr 1fr}
 @media (max-width:1000px){.admin-course-filter-grid{grid-template-columns:1fr 1fr 1fr}.admin-people-filter-grid{grid-template-columns:1fr 1fr}}
 @media (max-width:680px){.admin-course-filter-grid,.admin-people-filter-grid{grid-template-columns:1fr}}
+
+.admin-people-summary-row{grid-template-columns:repeat(4,minmax(0,1fr))}
+@media (max-width:900px){.admin-people-summary-row{grid-template-columns:1fr 1fr}}
