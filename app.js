@@ -71,7 +71,9 @@
     lastActivityStoredAt: 0,
     idleWarned: false,
     loginPreflightPromise: null,
-    loginPreflightDone: false
+    loginPreflightDone: false,
+    pendingLogoutToken: '',
+    pendingLogoutTimer: null
   };
 
   const escapeHtml = (value = '') => String(value).replace(/[&<>"']/g, ch => ({
@@ -580,6 +582,7 @@
   async function login(account, password) {
     const generation = ++state.authGeneration;
     clearViewState();
+    if (state.pendingLogoutTimer) { clearTimeout(state.pendingLogoutTimer); state.pendingLogoutTimer = null; }
     await waitLoginPreflight();
     const requestId = `L${Date.now().toString(36)}${Math.random().toString(36).slice(2,10)}`;
     const payload = { employeeId: account, password, requestId };
@@ -620,6 +623,9 @@
     recordActivity(true);
     startIdleMonitor(false);
     scheduleHydrateDashboardData();
+    const oldToken = state.pendingLogoutToken;
+    state.pendingLogoutToken = '';
+    if (oldToken && oldToken !== state.token) setTimeout(() => api('logout', {}, oldToken, { timeout: 5000, retry: false }).catch(() => {}), 4000);
     return true;
   }
   async function restoreSession() {
@@ -2354,9 +2360,18 @@
     }
     setModeBadge(navigator.onLine === false ? 'offline' : 'checking', navigator.onLine === false ? '裝置離線' : '待登入');
     window.scrollTo({ top: 0, behavior: 'auto' });
-    // Logout is client-immediate. Avoid a GAS logout request here: the old-session cleanup
-    // can otherwise contend with a user who signs back in immediately. The local token is
-    // discarded now and the server copy expires automatically.
+    // Client-immediate logout: do not block the UI on GAS. Revoke the old token later,
+    // or after the next login succeeds, so immediate account switching cannot race the logout request.
+    if (reason === 'manual' && token) {
+      state.pendingLogoutToken = token;
+      if (state.pendingLogoutTimer) clearTimeout(state.pendingLogoutTimer);
+      state.pendingLogoutTimer = setTimeout(() => {
+        const pending = state.pendingLogoutToken;
+        state.pendingLogoutToken = '';
+        state.pendingLogoutTimer = null;
+        if (pending) api('logout', {}, pending, { timeout: 5000, retry: false }).catch(() => {});
+      }, 30000);
+    }
     state.loginPreflightDone = false;
     state.loginPreflightPromise = null;
     startLoginPreflight();
