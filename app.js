@@ -2143,7 +2143,11 @@
     setButtonBusy(button, true, '處理中…');
     try {
       const data = await api('clearForceCompletePackage', { employeeId, packageId });
-      state.adminOverview = Array.isArray(data.overview) ? data.overview : state.adminOverview;
+      if (Array.isArray(data.overview)) state.adminOverview = data.overview;
+      else if (Array.isArray(data.packages)) {
+        const person = state.adminOverview.find(p => clean(p.employeeId) === clean(data.employeeId || employeeId));
+        if (person) person.packages = data.packages;
+      }
       state.overviewDirty = false;
       showToast(data.message || '已取消強制通過');
       renderAdmin();
