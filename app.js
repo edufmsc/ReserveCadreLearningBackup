@@ -1282,22 +1282,16 @@
   }
 
   function adminPersonPackagesForFilter(person) {
-    const packages = person?.packages || [];
-    if (!state.adminPeopleCourseId) return packages;
-    const selected = packages.find(pkg => clean(pkg.id) === clean(state.adminPeopleCourseId));
-    return selected ? [selected] : [];
+    let packages = person?.packages || [];
+    if (state.adminPeopleCourseId) packages = packages.filter(pkg => clean(pkg.id) === clean(state.adminPeopleCourseId));
+    if (state.adminPeopleStatus === 'incomplete') packages = packages.filter(pkg => packageSummary(pkg).status !== 'complete');
+    else if (state.adminPeopleStatus) packages = packages.filter(pkg => packageSummary(pkg).status === state.adminPeopleStatus);
+    return packages;
   }
 
   function adminPersonMatchesStatus(person) {
-    const packages = adminPersonPackagesForFilter(person);
-    if (state.adminPeopleCourseId && !packages.length) return false;
-    const statuses = packages.map(pkg => packageSummary(pkg).status);
-    if (!state.adminPeopleStatus) return true;
-    if (state.adminPeopleStatus === 'incomplete') return statuses.some(status => status !== 'complete');
-    if (state.adminPeopleStatus === 'not_started') return statuses.some(status => status === 'not_started');
-    if (state.adminPeopleStatus === 'in_progress') return statuses.some(status => status === 'in_progress');
-    if (state.adminPeopleStatus === 'complete') return statuses.length > 0 && statuses.every(status => status === 'complete');
-    return true;
+    if (!state.adminPeopleCourseId && !state.adminPeopleStatus) return true;
+    return adminPersonPackagesForFilter(person).length > 0;
   }
 
   function renderAdminPeople() {
