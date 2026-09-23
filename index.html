@@ -46,7 +46,7 @@
       </section>
 
       <section id="dashboardView" class="dashboard" hidden>
-        <article class="card profile-card profile-card--compact"><div class="profile-topline"><div><p class="step-label">登入中</p><h2><span id="userName">—</span>，您好</h2><p class="profile-subline"><span id="userMeta">—</span></p></div><div class="profile-actions"><span id="userRole" class="role-badge">—</span><button id="logoutButton" class="text-button text-button--danger" type="button">登出</button></div></div></article>
+        <article class="card profile-card profile-card--compact"><div class="profile-topline"><div><p class="step-label">登入中</p><h2><span id="userName">—</span>，您好</h2><p class="profile-subline"><span id="userMeta">—</span></p></div><div class="profile-actions"><button id="areaManagerViewToggle" class="secondary-button primary-button--fit" type="button" hidden>轄區學習</button><span id="userRole" class="role-badge">—</span><button id="logoutButton" class="text-button text-button--danger" type="button">登出</button></div></div></article>
 
         <section id="lessonPage" class="lesson-page" hidden>
           <div class="lesson-page__top"><button id="backLessonButton" class="secondary-button lesson-back-button" type="button">← 返回課程</button><div class="lesson-page__heading"><p id="lessonPackageName" class="step-label">—</p><h2 id="lessonTitle">—</h2></div></div>
@@ -81,7 +81,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="api_config.js?v=1.0"></script>
-  <script src="app.js?v=1.0-lazy-admin-20260923"></script>
+  <script src="app.js?v=1.0-area-manager-20260923"></script>
   <script>
     (() => {
       const FORM_URL = 'https://forms.gle/rSCuspJrPx5YmKAp7';
