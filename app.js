@@ -3,6 +3,7 @@
 
   const $ = id => document.getElementById(id);
   const VERSION = 'V1.0';
+  const EXPECTED_BACKEND_BUILD = 'UX-STABILITY-V1-20260924';
   const SESSION_KEY = 'reserve_learning_v11_session';
   const LEGACY_SESSION_KEYS = ['reserve_cadre_stage4_2_session', 'learning_backup_v1_session'];
   const SYNC_INTERVAL_MS = 120000;
@@ -498,8 +499,14 @@
       const data = await api('health', {}, '', { retry: false, timeout: 4500 });
       const backendVersion = clean(data?.version);
       if (data?.features) state.features = { ...state.features, ...data.features };
-      if (data?.ok) markConnectionSuccess(backendVersion);
-      else setModeBadge('checking', '後端資料檢查中');
+      if (data?.ok) {
+        if (clean(data?.build) && clean(data.build) !== EXPECTED_BACKEND_BUILD) {
+          state.apiConnected = true;
+          state.connectionFailures = 0;
+          state.lastApiSuccessAt = Date.now();
+          setModeBadge('checking', '後端版本待更新');
+        } else markConnectionSuccess(backendVersion);
+      } else setModeBadge('checking', '後端資料檢查中');
       return !!data?.ok;
     } catch (error) {
       state.connectionFailures += 1;
@@ -528,7 +535,8 @@
       .then(data => {
         if (data?.features) state.features = { ...state.features, ...data.features };
         state.loginPreflightDone = true;
-        setModeBadge('online', '後端正常');
+        if (clean(data?.build) && clean(data.build) !== EXPECTED_BACKEND_BUILD) setModeBadge('checking', '後端版本待更新');
+        else setModeBadge('online', '後端正常');
         return !!data?.ok;
       })
       .catch(() => false)
