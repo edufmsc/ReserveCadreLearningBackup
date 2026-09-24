@@ -495,7 +495,7 @@
     if (navigator.onLine === false) { setModeBadge('offline', '裝置離線'); return false; }
     if (!state.apiConnected && !options.quiet) setModeBadge('checking', '正在連線…');
     try {
-      const data = await api('health', {}, '', { retry: true, timeout: 12000 });
+      const data = await api('health', {}, '', { retry: false, timeout: 4500 });
       const backendVersion = clean(data?.version);
       if (data?.features) state.features = { ...state.features, ...data.features };
       if (data?.ok) markConnectionSuccess(backendVersion);
@@ -2677,13 +2677,28 @@
     } else if (!confirm('確定將這份作業設為「已通過」？')) return;
     setButtonBusy(button, true);
     try {
-      const data = await api('reviewSubmission', { id, decision, reason, previousStatus: current });
-      state.adminSubmissions = data;
+      const data = await api('reviewSubmission', { id, decision, reason, previousStatus: current }, state.token, { retry: false, timeout: MUTATION_TIMEOUT_MS });
+      if (data?.updated?.id) {
+        const items = Array.isArray(state.adminSubmissions.items) ? state.adminSubmissions.items : [];
+        const index = items.findIndex(item => clean(item.id) === clean(data.updated.id));
+        if (index >= 0) items[index] = { ...items[index], ...data.updated };
+        else items.unshift(data.updated);
+        state.adminSubmissions.items = items;
+      } else if (Array.isArray(data?.items)) {
+        state.adminSubmissions = data;
+      }
       state.adminSubmissionsLoadedAt = Date.now();
       state.overviewDirty = true;
+      state.adminTrackingDetailInflight.clear();
       renderAdminSubmissions();
-      showToast(data.message || '審核完成');
-    } catch (error) { setButtonBusy(button, false); showToast(error.message || '審核失敗'); }
+      showToast(data?.message || '審核完成');
+      ensureAdminOverview(true).catch(() => {});
+    } catch (error) {
+      if (isTransientReadError(error)) {
+        showToast('審核結果確認中…');
+        loadAdminSubmissions(true).catch(() => {});
+      } else showToast(error.message || '審核失敗');
+    } finally { setButtonBusy(button, false); }
   }
 
   function renderStudentSubmissionShell(lesson) {
