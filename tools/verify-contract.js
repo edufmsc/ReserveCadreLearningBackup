@@ -1,6 +1,7 @@
 const fs = require('fs');
 const front = fs.readFileSync('app.js', 'utf8');
 const contract = JSON.parse(fs.readFileSync('apps-script/contract.json', 'utf8'));
+const backend = fs.readFileSync('apps-script/Code.gs', 'utf8');
 
 function fail(message) { console.error(message); process.exit(1); }
 
@@ -42,5 +43,13 @@ for (const feature of ['lazyDataV114','batchUploadV114','contentFileUploadV116',
   if (contract.features?.[feature] !== true) fail(`Required Apps Script feature missing from contract: ${feature}`);
 }
 if (!expectedBackendBuild || expectedBackendBuild !== contract.build) fail(`Backend build mismatch: frontend=${expectedBackendBuild} contract=${contract.build}`);
+const backendBuild = (backend.match(/BUILD:\s*'([^']+)'/) || [])[1];
+if (!backendBuild || backendBuild !== contract.build) fail(`Backend source build mismatch: Code.gs=${backendBuild} contract=${contract.build}`);
+const backendActions = new Set([...backend.matchAll(/case\s+'([^']+)'\s*:/g)].map(m => m[1]));
+const missingBackendActions = [...supportedActions].filter(action => !backendActions.has(action));
+if (missingBackendActions.length) fail(`Code.gs missing contract actions: ${missingBackendActions.join(', ')}`);
+for (const feature of Object.keys(contract.features || {})) {
+  if (contract.features[feature] === true && !backend.includes(`${feature}: true`)) fail(`Code.gs missing feature flag: ${feature}`);
+}
 
 console.log(`Contract OK: ${frontendVersion}; frontend actions=${requiredActions.size}; contract actions=${supportedActions.size}; frontend features=${referencedFeatures.size}; build=${contract.build}`);
