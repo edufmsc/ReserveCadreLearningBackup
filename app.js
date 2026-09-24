@@ -1329,8 +1329,10 @@
     if (!payload) return;
     state.progressPending.delete(id);
     const token = state.token;
-    const task = api('saveProgress', payload, token, { retry: true, timeout: 12000 })
+    let failed = false;
+    const task = api('saveProgress', payload, token, { retry: false, timeout: 9000 })
       .catch(error => {
+        failed = true;
         if (token === state.token && !isSessionExpiredError(error) && !state.progressPending.has(id)) {
           state.progressPending.set(id, payload);
         }
@@ -1338,7 +1340,10 @@
       })
       .finally(() => {
         if (state.progressSaveInflight.get(id) === task) state.progressSaveInflight.delete(id);
-        if (token === state.token && state.progressPending.has(id)) {
+        // Only immediately drain a newer snapshot that arrived while a successful write
+        // was in flight. On network/backend failure keep it pending and wait for the next
+        // sync/online/focus event instead of creating a retry storm.
+        if (!failed && token === state.token && state.progressPending.has(id)) {
           setTimeout(() => drainProgressSave(id, false).catch(() => {}), 0);
         }
       });
