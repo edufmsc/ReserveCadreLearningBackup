@@ -1695,12 +1695,64 @@
     return task;
   }
 
+  function trackingSubmissionSummaryText(pkg) {
+    const summary = pkg?.submissionSummary;
+    if (!summary || !n(summary.total)) return '';
+    const parts = [];
+    if (n(summary.rejected)) parts.push(`退件 ${n(summary.rejected)}`);
+    if (n(summary.pending)) parts.push(`待審核 ${n(summary.pending)}`);
+    if (n(summary.draft)) parts.push(`未送審 ${n(summary.draft)}`);
+    if (n(summary.missing)) parts.push(`未上傳 ${n(summary.missing)}`);
+    if (!parts.length && n(summary.passed)) parts.push(`已通過 ${n(summary.passed)}/${n(summary.total)}`);
+    return parts.length ? `作業 ${parts.join('｜')}` : '';
+  }
+
+  function trackingSubmissionBadgeHtml(pkg) {
+    const summary = pkg?.submissionSummary;
+    if (!summary || !n(summary.total)) return '';
+    let label = '', cls = 'tag--muted';
+    if (n(summary.rejected)) { label = `作業退件 ${n(summary.rejected)}`; cls = 'tag--danger'; }
+    else if (n(summary.pending)) { label = `待審核 ${n(summary.pending)}`; cls = 'tag--warning'; }
+    else if (n(summary.draft)) { label = `未送審 ${n(summary.draft)}`; cls = 'tag--warning'; }
+    else if (n(summary.missing)) { label = `未上傳 ${n(summary.missing)}`; cls = 'tag--muted'; }
+    else if (n(summary.passed)) { label = `作業已通過`; cls = 'tag--success'; }
+    return label ? `<span class="tag ${cls} tracking-submission-badge">${escapeHtml(label)}</span>` : '';
+  }
+
+  function lessonSubmissionBadgeHtml(lesson) {
+    const mode = clean(lesson?.submissionMode) || '不需要';
+    if (mode === '不需要') return '';
+    const status = clean(lesson?.submissionStatus) || '未上傳';
+    const optional = mode === '選填';
+    const cls = submissionStatusClass(status);
+    return `<span class="tag ${cls}">${optional ? '選填作業' : '作業'}：${escapeHtml(status)}</span>`;
+  }
+
   function adminPackageDetailHtml(pkg) {
     if (!pkg) return '<div class="manage-empty">找不到課程細項</div>';
     const summary = packageSummary(pkg);
     const forcedMeta = pkg.forcedComplete ? `<div class="force-complete-note">教育中心人工通過${pkg.forcedAt ? `｜${escapeHtml(pkg.forcedAt)}` : ''}${pkg.forcedBy ? `｜${escapeHtml(pkg.forcedBy)}` : ''}${pkg.forcedNote ? `<br>${escapeHtml(pkg.forcedNote)}` : ''}</div>` : '';
-    const lessons = (pkg.lessons || []).map(lesson => `<div class="admin-lesson-row"><strong>${escapeHtml(visibleLessonTitle(lesson))}</strong>${statusTag(lesson.status)}<span class="admin-lesson-meta">影片 ${formatSeconds(lesson.videoSeconds)}｜PDF ${formatSeconds(lesson.pdfSeconds)}｜完成 ${formatDateTime(lesson.completedAt)}</span></div>`).join('');
-    return forcedMeta + (lessons || `<div class="manage-empty">${summary.status === 'complete' ? '此課程已完成' : '此課程沒有子課程明細'}</div>`);
+    const ruleMeta = pkg.completionRule === '任一必修子課程完成'
+      ? '<div class="tracking-rule-note">完成規則：任一適用必修子課程完成即可</div>'
+      : '';
+    const lessons = (pkg.lessons || []).map(lesson => {
+      const meta = [];
+      if (n(lesson.videoSeconds)) meta.push(`影片 ${formatSeconds(lesson.videoSeconds)}`);
+      if (n(lesson.pdfSeconds)) meta.push(`PDF ${formatSeconds(lesson.pdfSeconds)}`);
+      if (lesson.completedAt) meta.push(`完成 ${formatDateTime(lesson.completedAt)}`);
+      return `<div class="admin-lesson-row">
+        <div class="admin-lesson-row__main">
+          <strong>${escapeHtml(visibleLessonTitle(lesson))}</strong>
+          <div class="tracking-tag-row">
+            <span class="tag ${lesson.required ? 'tag--warning' : 'tag--muted'}">${lesson.required ? '必修' : '選修'}</span>
+            ${statusTag(lesson.status)}
+            ${lessonSubmissionBadgeHtml(lesson)}
+          </div>
+        </div>
+        <span class="admin-lesson-meta">${meta.length ? escapeHtml(meta.join('｜')) : '尚無學習紀錄'}</span>
+      </div>`;
+    }).join('');
+    return forcedMeta + ruleMeta + (lessons || `<div class="manage-empty">${summary.status === 'complete' ? '此課程已完成' : '此課程沒有子課程明細'}</div>`);
   }
 
   async function toggleAdminTrackingDetail(button) {
@@ -1722,11 +1774,13 @@
 
   function renderAdminPersonPackage(person, pkg) {
     const summary = packageSummary(pkg);
+    const submissionText = trackingSubmissionSummaryText(pkg);
     const canManage = state.user?.roleKey === 'admin';
     const force = canManage && state.features.forceComplete && !pkg.forcedComplete && summary.status !== 'complete' ? `<button class="mini-button v1-force-button" type="button" data-force-complete data-employee-id="${escapeHtml(person.employeeId)}" data-package-id="${escapeHtml(pkg.id)}">強制通過</button>` : '';
     const clearForce = canManage && state.features.forceComplete && pkg.forcedComplete ? `<button class="mini-button" type="button" data-clear-force-complete data-employee-id="${escapeHtml(person.employeeId)}" data-package-id="${escapeHtml(pkg.id)}">取消強制通過</button>` : '';
     const alreadyDetailed = Array.isArray(pkg.lessons);
-    return `<div class="person-package"><div class="person-package__head"><button class="person-package__toggle" type="button" data-admin-tracking-detail data-employee-id="${escapeHtml(person.employeeId)}" data-package-id="${escapeHtml(pkg.id)}"><span><strong>${escapeHtml(pkg.title)}</strong><small>${pkg.forcedComplete ? `人工通過｜原實際進度 ${summary.done}/${summary.total}` : `${summary.done}/${summary.total} 完成`}</small></span>${statusTag(summary.status)}</button><div class="person-package__quick-actions">${force}${clearForce}</div></div><div class="person-package__body" ${alreadyDetailed ? 'data-loaded="1"' : ''} hidden>${alreadyDetailed ? adminPackageDetailHtml(pkg) : ''}</div></div>`;
+    const progressText = pkg.forcedComplete ? `人工通過｜原實際進度 ${summary.done}/${summary.total}` : `${summary.done}/${summary.total} 完成`;
+    return `<div class="person-package"><div class="person-package__head"><button class="person-package__toggle" type="button" data-admin-tracking-detail data-employee-id="${escapeHtml(person.employeeId)}" data-package-id="${escapeHtml(pkg.id)}"><span><strong>${escapeHtml(pkg.title)}</strong><small>${escapeHtml(progressText)}${submissionText ? `｜${escapeHtml(submissionText)}` : ''}</small></span><span class="tracking-status-stack">${statusTag(summary.status)}${trackingSubmissionBadgeHtml(pkg)}</span></button><div class="person-package__quick-actions">${force}${clearForce}</div></div><div class="person-package__body" ${alreadyDetailed ? 'data-loaded="1"' : ''} hidden>${alreadyDetailed ? adminPackageDetailHtml(pkg) : ''}</div></div>`;
   }
 
   function uniquePackagesForAdmin() {
@@ -1809,7 +1863,10 @@
     if (!host) return;
     const rows = filteredAdminCourseRows();
     if (count) count.textContent = `顯示 ${rows.length} 人`;
-    host.innerHTML = rows.length ? rows.map(({ person, pkg, summary }) => `<div class="person-package admin-course-person"><button class="person-package__toggle" type="button" data-course-person="${escapeHtml(person.employeeId)}" data-course-package="${escapeHtml(pkg.id)}"><span><strong>${escapeHtml(person.name)}｜${escapeHtml(person.employeeId)}</strong><small>${escapeHtml(person.store || '未設定店別')}｜${summary.done}/${summary.total} 完成</small></span>${statusTag(summary.status)}</button><div class="person-package__body" hidden></div></div>`).join('') : '<div class="empty-state"><h3>查無符合資料</h3></div>';
+    host.innerHTML = rows.length ? rows.map(({ person, pkg, summary }) => {
+      const submissionText = trackingSubmissionSummaryText(pkg);
+      return `<div class="person-package admin-course-person"><button class="person-package__toggle" type="button" data-course-person="${escapeHtml(person.employeeId)}" data-course-package="${escapeHtml(pkg.id)}"><span><strong>${escapeHtml(person.name)}｜${escapeHtml(person.employeeId)}</strong><small>${escapeHtml(person.store || '未設定店別')}｜${summary.done}/${summary.total} 完成${submissionText ? `｜${submissionText}` : ''}</small></span><span class="tracking-status-stack">${statusTag(summary.status)}${trackingSubmissionBadgeHtml(pkg)}</span></button><div class="person-package__body" hidden></div></div>`;
+    }).join('') : '<div class="empty-state"><h3>查無符合資料</h3></div>';
     host.querySelectorAll('[data-course-person]').forEach(button => button.onclick = () => renderAdminCoursePersonDetails(button));
   }
 
