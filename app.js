@@ -14,6 +14,9 @@
   const API_TIMING_KEY = 'reserve_learning_v1_api_timing';
   const FIRST_SCREEN_TIMEOUT_MS = 6500;
   const BACKGROUND_READ_TIMEOUT_MS = 12000;
+  const LOGIN_REQUEST_TIMEOUT_MS = 8000;
+  const LESSON_DETAIL_TIMEOUT_MS = 9000;
+  const MUTATION_TIMEOUT_MS = 10000;
   const PDFJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
   const PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   const XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
@@ -374,7 +377,21 @@
 
   function saveSession() {
     if (!state.token) return;
-    sessionStorage.setItem(SESSION_KEY, JSON.stringify({ token: state.token }));
+    const snapshot = {
+      token: state.token,
+      user: state.user ? {
+        employeeId: state.user.employeeId || '',
+        name: state.user.name || '',
+        role: state.user.role || '',
+        roleKey: state.user.roleKey || '',
+        area: state.user.area || '',
+        store: state.user.store || ''
+      } : null,
+      mode: state.mode || '',
+      areaManagerView: state.areaManagerView || 'tracking',
+      savedAt: Date.now()
+    };
+    sessionStorage.setItem(SESSION_KEY, JSON.stringify(snapshot));
     LEGACY_SESSION_KEYS.forEach(key => sessionStorage.removeItem(key));
   }
 
@@ -671,22 +688,22 @@
     let firstError = null;
 
     try {
-      data = await api('login', payload, '', { timeout: 12000, retry: false });
+      data = await api('login', payload, '', { timeout: LOGIN_REQUEST_TIMEOUT_MS, retry: false });
     } catch (error) {
       firstError = error;
       if (!transientCodes.has(error?.code || '') || generation !== state.authGeneration) throw error;
       setModeBadge('checking', '正在確認登入結果');
-      data = await recoverLoginResult(payload, generation, 9000);
+      data = await recoverLoginResult(payload, generation, 7500);
     }
 
     if (!data && generation === state.authGeneration) {
       setModeBadge('checking', '後端連線較慢｜自動續接');
       await new Promise(resolve => setTimeout(resolve, loginRetryDelay(account, 1)));
       try {
-        data = await api('login', payload, '', { timeout: 10000, retry: false });
+        data = await api('login', payload, '', { timeout: LOGIN_REQUEST_TIMEOUT_MS, retry: false });
       } catch (error) {
         if (!transientCodes.has(error?.code || '')) throw error;
-        data = await recoverLoginResult(payload, generation, 7000);
+        data = await recoverLoginResult(payload, generation, 5000);
         if (!data) throw error;
       }
     }
@@ -933,7 +950,7 @@
     const inflight = state.studentLessonInflight.get(key);
     if (inflight) return inflight;
     const task = (async () => {
-      const data = await api('studentLesson', { lessonId }, state.token, { retry: true, timeout: 12000 });
+      const data = await api('studentLesson', { lessonId }, state.token, { retry: false, timeout: LESSON_DETAIL_TIMEOUT_MS });
       const detail = data?.lesson;
       if (!detail?.id) throw new Error('教材資料格式不完整');
       const pkg = state.packages.find(x => x.id === (data.packageId || packageId));
@@ -961,7 +978,12 @@
       $('lessonMeta').innerHTML = '';
       $('lessonContent').innerHTML = '<div class="empty-state"><h3>正在載入教材…</h3></div>';
       try { ({ pkg, lesson } = await ensureStudentLessonDetail(packageId, lessonId)); }
-      catch (error) { $('lessonPage').hidden = true; $('studentDashboard').hidden = false; showToast(error.message || '教材載入失敗'); return; }
+      catch (error) {
+        $('lessonContent').innerHTML = `<div class="load-state lesson-load-error"><strong>${escapeHtml(error.message || '教材載入失敗')}</strong><button class="secondary-button primary-button--fit" type="button" data-retry-lesson>重新載入教材</button></div>`;
+        const retry = document.querySelector('[data-retry-lesson]');
+        if (retry) retry.onclick = () => openLesson(packageId, lessonId);
+        return;
+      }
     }
     state.activePackageId = packageId;
     state.activeLessonId = lessonId;
@@ -1431,19 +1453,45 @@
     if (state.previewMode) return;
     const { lesson } = activeLesson();
     if (!lesson) return;
+    const lessonId = lesson.id;
     const button = $('completeLessonButton');
     setButtonBusy(button, true, '完成中…');
     try {
-      // 只送一次 completeLesson，避免舊版先 saveProgress 再 completeLesson 造成雙倍等待。
-      const packages = await api('completeLesson', { lessonId: lesson.id, contentProgress: state.tracker?.contentProgress || lesson.contentProgress || {} });
-      if (Array.isArray(packages)) state.packages = packages;
+      // Never auto-retry this mutation. If the response is lost after the backend wrote,
+      // reconcile from studentHome instead of asking the learner to submit the write twice.
+      const result = await api('completeLesson', { lessonId, contentProgress: state.tracker?.contentProgress || lesson.contentProgress || {} }, state.token, { retry: false, timeout: MUTATION_TIMEOUT_MS });
+      if (Array.isArray(result)) state.packages = result;
+      else if (Array.isArray(result?.packages)) state.packages = result.packages;
+      else {
+        const found = findStudentLesson(state.activePackageId, lessonId);
+        if (found.lesson) {
+          found.lesson.status = 'complete';
+          found.lesson.completedAt = result?.completedAt || found.lesson.completedAt || new Date().toISOString();
+        }
+      }
       stopTracker();
       showToast(lesson.title === '__PACKAGE_DIRECT__' ? '課程已完成' : '子課程已完成');
       renderLessonPage(false);
+      renderStudent();
       saveViewState({ view: 'lesson', scrollY: window.scrollY || 0 });
+      ensureStudentPackages(true, { background: true }).catch(() => {});
     } catch (error) {
-      setButtonBusy(button, false);
+      if (isTransientReadError(error)) {
+        showToast('正在確認完成結果…');
+        try {
+          await ensureStudentPackages(true, { background: true });
+          const refreshed = state.packages.flatMap(pkg => pkg.lessons || []).find(item => clean(item.id) === clean(lessonId));
+          if (refreshed?.status === 'complete') {
+            stopTracker();
+            renderStudent();
+            showToast(lesson.title === '__PACKAGE_DIRECT__' ? '課程已完成' : '子課程已完成');
+            return;
+          }
+        } catch {}
+      }
       showToast(error.message || '尚未符合完成條件');
+    } finally {
+      setButtonBusy(button, false);
     }
   }
 
@@ -2978,6 +3026,30 @@
       $('dashboardView').hidden = true;
       startLoginPreflight();
       return;
+    }
+
+    if (current.user && current.user.employeeId) {
+      state.token = current.token;
+      state.user = current.user;
+      state.mode = current.mode || (current.user.roleKey === 'admin' ? 'admin' : current.user.roleKey === 'area_manager' ? 'area_manager' : 'student');
+      state.areaManagerView = current.areaManagerView === 'student' ? 'student' : 'tracking';
+      state.studentPackagesLoaded = false;
+      state.overviewDirty = true;
+      if ($('bootView')) $('bootView').hidden = true;
+      $('loginView').hidden = true;
+      $('dashboardView').hidden = false;
+      $('userName').textContent = state.user.name || '—';
+      $('userRole').textContent = state.user.role || '—';
+      $('userMeta').textContent = `${state.user.employeeId || '—'}｜${state.user.area || '—'}｜${state.user.store || '—'}`;
+      if (state.user.roleKey === 'admin' || (isAreaManagerUser() && state.areaManagerView === 'tracking')) {
+        $('studentDashboard').hidden = true;
+        $('adminDashboard').hidden = false;
+        renderAdmin();
+      } else {
+        $('studentDashboard').hidden = false;
+        $('adminDashboard').hidden = true;
+        renderStudent();
+      }
     }
 
     const restoreTask = restoreSession();
