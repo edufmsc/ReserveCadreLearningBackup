@@ -498,21 +498,20 @@
     const value = clean(account).toUpperCase();
     let hash = 0;
     for (let i = 0; i < value.length; i++) hash = ((hash * 33) + value.charCodeAt(i)) >>> 0;
-    return 650 + (hash % 850) + Math.max(0, attempt - 1) * 450;
+    return 250 + (hash % 400) + Math.max(0, attempt - 1) * 250;
   }
 
   function startLoginPreflight() {
     if (state.loginPreflightPromise) return state.loginPreflightPromise;
     if (state.loginPreflightDone || !configured() || navigator.onLine === false) return Promise.resolve(false);
-    setModeBadge('checking', '後端預熱中');
-    const task = api('authWarm', {}, '', { retry: false, timeout: 8000 })
-      .catch(error => error?.code === 'UNKNOWN_ACTION'
-        ? api('health', {}, '', { retry: false, timeout: 8000 })
-        : Promise.reject(error))
+    // Login Fast Path: preflight must never touch Sheets. The 5-minute server warm-up
+    // owns data warming; the login page only checks whether the deployment responds.
+    setModeBadge('checking', '檢查後端');
+    const task = api('health', {}, '', { retry: false, timeout: 4500 })
       .then(data => {
         if (data?.features) state.features = { ...state.features, ...data.features };
         state.loginPreflightDone = true;
-        setModeBadge('online', '後端已就緒');
+        setModeBadge('online', '後端正常');
         return !!data?.ok;
       })
       .catch(() => false)
@@ -527,15 +526,19 @@
     return;
   }
 
-  async function recoverLoginResult(payload, generation, maxWaitMs = 5000) {
+  async function recoverLoginResult(payload, generation, maxWaitMs = 10000) {
     const end = Date.now() + maxWaitMs;
+    let missingCount = 0;
     while (Date.now() < end) {
       if (generation !== state.authGeneration) return null;
-      await new Promise(resolve => setTimeout(resolve, 700));
+      await new Promise(resolve => setTimeout(resolve, 600));
       try {
-        const status = await api('loginStatus', { employeeId: payload.employeeId, requestId: payload.requestId }, '', { retry: false, timeout: 3500 });
+        const status = await api('loginStatus', { employeeId: payload.employeeId, requestId: payload.requestId }, '', { retry: false, timeout: 3000 });
         if (status?.status === 'done' && status.login?.sessionToken) return status.login;
-        if (status?.status === 'missing') return null;
+        if (status?.status === 'missing') {
+          missingCount += 1;
+          if (missingCount >= 2) return null;
+        } else missingCount = 0;
       } catch (error) {
         if (error?.code === 'UNKNOWN_ACTION') return null;
       }
@@ -673,17 +676,17 @@
       firstError = error;
       if (!transientCodes.has(error?.code || '') || generation !== state.authGeneration) throw error;
       setModeBadge('checking', '正在確認登入結果');
-      data = await recoverLoginResult(payload, generation, 5000);
+      data = await recoverLoginResult(payload, generation, 9000);
     }
 
     if (!data && generation === state.authGeneration) {
       setModeBadge('checking', '後端連線較慢｜自動續接');
       await new Promise(resolve => setTimeout(resolve, loginRetryDelay(account, 1)));
       try {
-        data = await api('login', payload, '', { timeout: 14000, retry: false });
+        data = await api('login', payload, '', { timeout: 10000, retry: false });
       } catch (error) {
         if (!transientCodes.has(error?.code || '')) throw error;
-        data = await recoverLoginResult(payload, generation, 4500);
+        data = await recoverLoginResult(payload, generation, 7000);
         if (!data) throw error;
       }
     }
@@ -2819,9 +2822,9 @@
         state.token = '';
         if (isSessionExpiredError(error)) clearSession();
         const transient = ['TIMEOUT','NETWORK_ERROR','NON_JSON_RESPONSE','LOGIN_IN_PROGRESS'].includes(error?.code || '');
-        $('loginMessage').textContent = transient ? '後端目前連線較慢，請稍候數秒後再登入；系統會持續預熱後端。' : (error.message || '登入失敗');
+        $('loginMessage').textContent = transient ? '登入連線逾時，請再試一次。' : (error.message || '登入失敗');
         $('loginMessage').hidden = false;
-        if (transient) { state.loginPreflightDone = false; startLoginPreflight(); }
+        if (transient) { state.loginPreflightDone = false; checkConnection(true).catch(() => {}); }
       }
       finally { setButtonBusy(button, false); }
     });
