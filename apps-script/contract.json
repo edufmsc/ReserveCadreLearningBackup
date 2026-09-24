@@ -74,6 +74,7 @@
     "progressSnapshotV1": true,
     "adminTrackingFastV1": true,
     "areaManagerTrackingV1": true,
-    "fastStartV2": true
+    "fastStartV2": true,
+    "loginFastPathV3": true
   }
 }
