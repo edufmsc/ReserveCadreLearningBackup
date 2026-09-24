@@ -458,3 +458,49 @@
   .load-state{align-items:stretch;flex-direction:column}
   .load-state .secondary-button{width:100%}
 }
+
+
+/* Tracking lesson + submission status */
+.tracking-status-stack{
+  display:flex;
+  flex-direction:column;
+  align-items:flex-end;
+  gap:4px;
+  flex:0 0 auto;
+}
+.tracking-submission-badge{
+  white-space:nowrap;
+}
+.tracking-rule-note{
+  margin:0 0 8px;
+  padding:7px 9px;
+  border-radius:9px;
+  background:var(--soft);
+  color:var(--muted);
+  font-size:.74rem;
+}
+.admin-lesson-row{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) auto;
+  align-items:center;
+  gap:8px 12px;
+}
+.admin-lesson-row__main{
+  min-width:0;
+  display:grid;
+  gap:5px;
+}
+.tracking-tag-row{
+  display:flex;
+  flex-wrap:wrap;
+  gap:4px;
+}
+.admin-lesson-meta{
+  text-align:right;
+}
+@media(max-width:700px){
+  .tracking-status-stack{align-items:flex-start}
+  .person-package__toggle{align-items:flex-start}
+  .admin-lesson-row{grid-template-columns:1fr}
+  .admin-lesson-meta{text-align:left}
+}
