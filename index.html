@@ -9,20 +9,22 @@
   <meta name="referrer" content="strict-origin-when-cross-origin">
   <title>教育中心備援學習平台｜V1.0</title>
   <link rel="preconnect" href="https://script.google.com" crossorigin>
+  <link rel="preconnect" href="https://docs.google.com" crossorigin>
   <link rel="preconnect" href="https://www.youtube.com" crossorigin>
   <link rel="dns-prefetch" href="//script.google.com">
-  <link rel="stylesheet" href="styles.css?v=1.0-fast-start-v2-20260924">
+  <link rel="stylesheet" href="styles.css?v=1.0-embedded-report-20260924">
   <style>
     #studentReportPanel{display:none}
     #studentDashboard:has([data-student-tab="report"].is-active) #studentReportPanel{display:block}
     .report-panel-card{border:1px solid var(--line);border-radius:14px;background:#fff;overflow:hidden}
-    .report-panel-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:14px 16px}
+    .report-panel-head{display:flex;justify-content:space-between;gap:12px;align-items:center;padding:12px 14px;border-bottom:1px solid var(--line)}
     .report-panel-head h2{margin:0}
     .report-panel-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
-    .report-panel-actions a{text-decoration:none;display:inline-flex;align-items:center;justify-content:center}
-    .report-panel-body{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px;border-top:1px solid var(--line);background:#fffdfa}
-    .report-panel-body p{margin:0;font-size:.8rem}
-    @media (max-width:700px){.report-panel-head,.report-panel-body{display:grid}.report-panel-actions{justify-content:stretch}.report-panel-actions>*{width:100%}}
+    .report-frame-wrap{position:relative;background:#fff;min-height:640px}
+    .report-frame-loading{position:absolute;inset:0;display:grid;place-items:center;background:#fff;z-index:1;color:var(--muted);font-size:.82rem}
+    .report-frame-wrap.is-loaded .report-frame-loading{display:none}
+    .report-frame{display:block;width:100%;height:min(78vh,980px);min-height:680px;border:0;background:#fff}
+    @media (max-width:700px){.report-panel-head{display:grid}.report-panel-actions{justify-content:stretch}.report-panel-actions>*{width:100%}.report-frame{height:74vh;min-height:620px}.report-frame-wrap{min-height:580px}}
   </style>
 </head>
 <body>
@@ -58,8 +60,20 @@
           <section id="studentRecordsPanel" class="tab-panel" hidden><div class="panel-heading"><div><h2>學習紀錄</h2></div></div><div id="studentRecordsList" class="record-list"></div></section>
           <section id="studentReportPanel" class="tab-panel" aria-label="紀錄回報" hidden>
             <article class="report-panel-card">
-              <div class="report-panel-head"><div><h2>實際錄用紀錄回報</h2></div><div class="report-panel-actions"><a class="primary-button primary-button--fit" href="https://forms.gle/rSCuspJrPx5YmKAp7" target="_blank" rel="noopener">填寫紀錄回報</a></div></div>
-              <div class="report-panel-body"><p>每筆錄用紀錄分別送出即可。</p></div>
+              <div class="report-panel-head">
+                <div><h2>實際錄用紀錄回報</h2></div>
+                <div class="report-panel-actions"><button id="resetRecordReportButton" class="secondary-button primary-button--fit" type="button">填寫下一筆</button></div>
+              </div>
+              <div id="recordReportFrameWrap" class="report-frame-wrap">
+                <div class="report-frame-loading">正在載入回報表單…</div>
+                <iframe id="recordReportFrame" class="report-frame" title="實際錄用紀錄回報"
+                  src="about:blank"
+                  data-src="https://forms.gle/rSCuspJrPx5YmKAp7?embedded=true"
+                  loading="lazy"
+                  referrerpolicy="strict-origin-when-cross-origin"
+                  allow="clipboard-write"
+                ></iframe>
+              </div>
             </article>
           </section>
         </section>
@@ -79,7 +93,7 @@
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="api_config.js?v=1.0"></script>
-  <script src="app.js?v=1.0-fast-start-v2-20260924"></script>
+  <script src="app.js?v=1.0-embedded-report-20260924"></script>
 
 </body>
 </html>
