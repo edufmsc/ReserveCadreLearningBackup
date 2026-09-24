@@ -34,6 +34,10 @@ jobs:
           grep -q "packageDirectSubmissionV116" app.js
           grep -q "loadXlsx" app.js
           grep -q "課程回傳設定" app.js
+          grep -q "MUTATION_TIMEOUT_MS" app.js
+          grep -q "data-retry-lesson" app.js
+          grep -q "審核結果確認中" app.js
+          grep -q "current.user && current.user.employeeId" app.js
           grep -q "V1.0" index.html
           test ! -e app.v112.loader.js
           test ! -e app.bundle.001
