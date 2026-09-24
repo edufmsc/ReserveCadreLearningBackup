@@ -76,6 +76,7 @@
     "areaManagerTrackingV1": true,
     "fastStartV2": true,
     "loginFastPathV3": true,
-    "trackingSubmissionStatusV1": true
+    "trackingSubmissionStatusV1": true,
+    "trackingDetailFastV2": true
   }
 }
