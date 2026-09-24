@@ -1682,7 +1682,7 @@
     const inflight = state.adminTrackingDetailInflight.get(key);
     if (inflight) return inflight;
     const task = (async () => {
-      const data = await api('adminTrackingDetail', { employeeId, packageId }, state.token, { retry: true, timeout: 12000 });
+      const data = await api('adminTrackingDetail', { employeeId, packageId }, state.token, { retry: false, timeout: 9000 });
       if (!data?.package) throw new Error('找不到課程細項');
       if (person) {
         const position = (person.packages || []).findIndex(x => clean(x.id) === clean(packageId));
@@ -1767,7 +1767,16 @@
         const { pkg } = await ensureAdminTrackingDetail(button.dataset.employeeId, button.dataset.packageId);
         body.innerHTML = adminPackageDetailHtml(pkg);
         body.dataset.loaded = '1';
-      } catch (error) { body.innerHTML = `<div class="manage-empty">${escapeHtml(error.message || '細項載入失敗')}</div>`; }
+      } catch (error) {
+        body.innerHTML = `<div class="load-state tracking-detail-error"><strong>${escapeHtml(error.message || '細項載入失敗')}</strong><button class="secondary-button primary-button--fit" type="button" data-retry-tracking-detail>重新載入細項</button></div>`;
+        const retry = body.querySelector('[data-retry-tracking-detail]');
+        if (retry) retry.onclick = () => {
+          body.dataset.loaded = '';
+          body.hidden = true;
+          button.classList.remove('is-open');
+          toggleAdminTrackingDetail(button);
+        };
+      }
     } else body.hidden = false;
     button.classList.add('is-open');
   }
@@ -1820,7 +1829,17 @@
         const { pkg } = await ensureAdminTrackingDetail(employeeId, packageId);
         body.innerHTML = adminPackageDetailHtml(pkg);
         body.dataset.loaded = '1';
-      } catch (error) { body.innerHTML = `<div class="manage-empty">${escapeHtml(error.message || '細項載入失敗')}</div>`; }
+      } catch (error) {
+        body.innerHTML = `<div class="load-state tracking-detail-error"><strong>${escapeHtml(error.message || '細項載入失敗')}</strong><button class="secondary-button primary-button--fit" type="button" data-retry-course-detail>重新載入細項</button></div>`;
+        const retry = body.querySelector('[data-retry-course-detail]');
+        if (retry) retry.onclick = () => {
+          body.dataset.loaded = '';
+          body.hidden = true;
+          row?.classList.remove('is-expanded');
+          button.classList.remove('is-open');
+          renderAdminCoursePersonDetails(button);
+        };
+      }
     } else body.hidden = false;
     row?.classList.add('is-expanded');
     button.classList.add('is-open');
