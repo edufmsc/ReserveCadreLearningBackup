@@ -3098,8 +3098,24 @@
         if (!ok && !state.token) {
           $('loginView').hidden = false;
           $('dashboardView').hidden = true;
+        } else if (!ok && state.token && state.user) {
+          const token = state.token;
+          setTimeout(() => {
+            if (state.token !== token || !state.user) return;
+            restoreSession().then(recovered => {
+              if (!recovered && state.token === token && state.user) scheduleHydrateDashboardData();
+            }).catch(() => scheduleHydrateDashboardData());
+          }, 1200);
         }
       }).catch(() => {});
+    } else if (fastResult === false && state.token && state.user) {
+      const token = state.token;
+      setTimeout(() => {
+        if (state.token !== token || !state.user) return;
+        restoreSession().then(recovered => {
+          if (!recovered && state.token === token && state.user) scheduleHydrateDashboardData();
+        }).catch(() => scheduleHydrateDashboardData());
+      }, 1200);
     }
   }
 
