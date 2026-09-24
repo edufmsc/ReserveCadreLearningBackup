@@ -11,6 +11,9 @@
   const IDLE_ACTIVITY_KEY = 'reserve_learning_v1_last_activity';
   const SUBMISSION_CACHE_MS = 120000;
   const VIEW_KEY = 'reserve_learning_v11_view';
+  const API_TIMING_KEY = 'reserve_learning_v1_api_timing';
+  const FIRST_SCREEN_TIMEOUT_MS = 6500;
+  const BACKGROUND_READ_TIMEOUT_MS = 12000;
   const PDFJS_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
   const PDFJS_WORKER = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
   const XLSX_URL = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
@@ -52,6 +55,10 @@
     studentPackagesLoading: null,
     adminCatalogLoading: null,
     adminOverviewLoading: null,
+    studentPackagesError: '',
+    adminOverviewError: '',
+    studentHomeRetryTimer: null,
+    adminOverviewRetryTimer: null,
     studentLessonInflight: new Map(),
     adminTrackingDetailInflight: new Map(),
     adminPeopleRenderFrame: 0,
@@ -102,6 +109,27 @@
     return !!(window.LEARNING_CONFIG && /^https:\/\/script\.google\.com\/macros\/s\/.+\/exec(?:\?.*)?$/i.test(clean(window.LEARNING_CONFIG.API_URL)));
   }
 
+  function recordApiTiming(action, clientMs, serverTiming = null) {
+    const entry = { action, clientMs: Math.round(clientMs), at: Date.now() };
+    if (serverTiming && typeof serverTiming === 'object') entry.server = serverTiming;
+    try {
+      const previous = JSON.parse(sessionStorage.getItem(API_TIMING_KEY) || '[]');
+      const next = (Array.isArray(previous) ? previous : []).concat(entry).slice(-30);
+      sessionStorage.setItem(API_TIMING_KEY, JSON.stringify(next));
+    } catch {}
+    try { console.info('[FAST_START_TIMING]', entry); } catch {}
+  }
+
+  function isTransientReadError(error) {
+    return ['TIMEOUT','NETWORK_ERROR','NON_JSON_RESPONSE','HTTP_ERROR'].includes(error?.code || '');
+  }
+
+  function savedViewHint() {
+    const saved = readViewState();
+    if (saved?.view === 'student' || saved?.view === 'lesson' || saved?.areaManagerView === 'student') return 'student';
+    return 'tracking';
+  }
+
   const SAFE_RETRY_ACTIONS = new Set(['health','authWarm','loginStatus','bootstrap','studentPackages','studentHome','studentLesson','adminOverview','adminTracking','adminTrackingDetail','adminCatalog','getSubmission','adminSubmissions','getPdfContent','exportProgress']);
 
   function actionTimeout(action) {
@@ -127,6 +155,7 @@
 
   async function api(action, payload = {}, token = state.token, options = {}) {
     if (!configured()) throw new Error('尚未設定 Apps Script /exec 網址。');
+    const startedAt = performance.now();
     const retryable = options.retry === true || (options.retry !== false && SAFE_RETRY_ACTIONS.has(action));
     const attempts = retryable ? 2 : 1;
     let lastError;
@@ -150,6 +179,7 @@
         markConnectionSuccess(action === 'health' ? clean(result?.data?.version) : '');
         if (!response.ok) { const err = new Error(result?.error?.message || '後端連線失敗。'); err.code = result?.error?.code || 'HTTP_ERROR'; err.retryable = response.status >= 500; throw err; }
         if (!result || result.success !== true) { const err = new Error(result?.error?.message || '後端處理失敗。'); err.code = result?.error?.code || 'SERVER_ERROR'; err.retryable = false; throw err; }
+        recordApiTiming(action, performance.now() - startedAt, result?.data?.timing || result?.data?.serverTiming || null);
         return result.data;
       } catch (error) {
         lastError = error;
@@ -417,21 +447,14 @@
     state.idleTimer = null;
   }
 
-  function hydrationDelayMs() {
-    if (state.user?.roleKey !== 'student') return 0;
-    const value = clean(state.user?.employeeId);
-    let hash = 0;
-    for (let i = 0; i < value.length; i++) hash = ((hash * 31) + value.charCodeAt(i)) >>> 0;
-    return hash % 1800;
-  }
-
   function scheduleHydrateDashboardData() {
     const token = state.token;
-    const delay = hydrationDelayMs();
-    window.setTimeout(() => {
+    Promise.resolve().then(() => {
       if (!token || state.token !== token || !state.user) return;
-      hydrateDashboardData().catch(error => showToast(error.message || '資料載入失敗'));
-    }, delay);
+      hydrateDashboardData().catch(error => {
+        if (!isTransientReadError(error)) showToast(error.message || '資料載入失敗');
+      });
+    });
   }
 
   function saveFoldState() {
@@ -499,9 +522,9 @@
   }
 
   async function waitLoginPreflight() {
-    const task = state.loginPreflightPromise;
-    if (!task) return;
-    await Promise.race([task, new Promise(resolve => setTimeout(resolve, 1800))]);
+    // Fast Start V2: preflight warms the backend in parallel but never blocks login.
+    if (!state.loginPreflightPromise) startLoginPreflight();
+    return;
   }
 
   async function recoverLoginResult(payload, generation, maxWaitMs = 5000) {
@@ -534,17 +557,26 @@
     state.mode = data.mode || state.mode || '';
     state.features = { ...state.features, ...(data.features || {}) };
     state.uploadConfig = { ...state.uploadConfig, ...(data.uploadConfig || {}) };
-    if (data.mode === 'admin' || data.mode === 'area_manager') {
-      const hasOverview = Array.isArray(data.overview);
-      const hasCatalog = !!data.catalog;
+    if (data.initialView === 'student' || data.initialView === 'tracking') state.areaManagerView = data.initialView;
+    const hasOverview = Array.isArray(data.overview);
+    const hasPackages = Array.isArray(data.packages);
+    const hasCatalog = !!data.catalog;
+
+    if (data.mode === 'admin') {
       state.adminOverview = hasOverview ? data.overview : [];
-      state.adminCatalog = hasCatalog ? data.catalog : { packages: [], learners: [], assignments: [] };
       state.overviewDirty = !hasOverview;
+      state.adminCatalog = hasCatalog ? data.catalog : { packages: [], learners: [], assignments: [] };
       state.adminCatalogLoaded = hasCatalog;
       state.packages = [];
       state.studentPackagesLoaded = false;
+    } else if (data.mode === 'area_manager') {
+      state.adminOverview = hasOverview ? data.overview : [];
+      state.overviewDirty = !hasOverview;
+      state.packages = hasPackages ? data.packages : [];
+      state.studentPackagesLoaded = hasPackages;
+      state.adminCatalog = { packages: [], learners: [], assignments: [] };
+      state.adminCatalogLoaded = false;
     } else {
-      const hasPackages = Array.isArray(data.packages);
       state.packages = hasPackages ? data.packages : [];
       state.studentPackagesLoaded = hasPackages;
       state.adminOverview = [];
@@ -552,20 +584,43 @@
       state.overviewDirty = false;
       state.adminCatalogLoaded = false;
     }
+    state.studentPackagesError = '';
+    state.adminOverviewError = '';
   }
 
-  async function ensureStudentPackages(force = false) {
-    if (!isLearnerUser()) return;
-    if (!force && state.studentPackagesLoaded) return;
+  async function ensureStudentPackages(force = false, options = {}) {
+    if (!isLearnerUser()) return state.packages;
+    if (!force && state.studentPackagesLoaded) return state.packages;
     if (state.studentPackagesLoading) return state.studentPackagesLoading;
     const action = state.features.splitReadV1 ? 'studentHome' : 'studentPackages';
-    const task = api(action, {}, state.token, { retry: true, timeout: 12000 })
+    const background = !!options.background;
+    state.studentPackagesError = '';
+    if (!state.studentPackagesLoaded) renderStudent();
+    const task = api(action, {}, state.token, { retry: false, timeout: background ? BACKGROUND_READ_TIMEOUT_MS : FIRST_SCREEN_TIMEOUT_MS })
       .then(data => {
         const packages = Array.isArray(data) ? data : (Array.isArray(data?.packages) ? data.packages : []);
         state.packages = packages;
         state.studentPackagesLoaded = true;
+        state.studentPackagesError = '';
+        if (state.studentHomeRetryTimer) { clearTimeout(state.studentHomeRetryTimer); state.studentHomeRetryTimer = null; }
         renderStudent();
         return packages;
+      })
+      .catch(error => {
+        if (isTransientReadError(error) && state.token) {
+          state.studentPackagesError = '課程資料載入較慢';
+          renderStudent();
+          if (!background && !state.studentHomeRetryTimer) {
+            const token = state.token;
+            state.studentHomeRetryTimer = setTimeout(() => {
+              state.studentHomeRetryTimer = null;
+              if (state.token !== token || state.studentPackagesLoaded) return;
+              ensureStudentPackages(true, { background: true }).catch(() => {});
+            }, 700);
+          }
+          return state.packages;
+        }
+        throw error;
       })
       .finally(() => { state.studentPackagesLoading = null; });
     state.studentPackagesLoading = task;
@@ -602,11 +657,12 @@
 
   async function login(account, password) {
     const generation = ++state.authGeneration;
+    const viewHint = savedViewHint();
     clearViewState();
     if (state.pendingLogoutTimer) { clearTimeout(state.pendingLogoutTimer); state.pendingLogoutTimer = null; }
-    await waitLoginPreflight();
+    waitLoginPreflight();
     const requestId = `L${Date.now().toString(36)}${Math.random().toString(36).slice(2,10)}`;
-    const payload = { employeeId: account, password, requestId };
+    const payload = { employeeId: account, password, requestId, viewHint };
     const transientCodes = new Set(['TIMEOUT','NETWORK_ERROR','NON_JSON_RESPONSE','LOGIN_IN_PROGRESS']);
     let data = null;
     let firstError = null;
@@ -637,7 +693,7 @@
     state.token = data.sessionToken;
     state.loginPreflightDone = true;
     saveSession();
-    const bootstrap = data.bootstrap || await api('bootstrap', {}, state.token, { retry: true, timeout: 12000 });
+    const bootstrap = data.bootstrap || await api('bootstrap', { viewHint }, state.token, { retry: false, timeout: FIRST_SCREEN_TIMEOUT_MS });
     if (generation !== state.authGeneration) return false;
     captureBootstrap(bootstrap);
     renderDashboard();
@@ -658,7 +714,8 @@
     state.token = restoreToken;
     const task = (async () => {
       try {
-        const data = await api('bootstrap', {}, restoreToken, { retry: true, timeout: 12000 });
+        const viewHint = savedViewHint();
+        const data = await api('bootstrap', { viewHint }, restoreToken, { retry: false, timeout: FIRST_SCREEN_TIMEOUT_MS });
         if (generation !== state.authGeneration) return false;
         if (state.token !== restoreToken && state.user) return true;
         captureBootstrap(data);
@@ -782,7 +839,24 @@
     }
   }
 
+  function summarySkeleton(count) {
+    return Array.from({ length: count }, () => '<article class="summary-card is-loading"><span class="skeleton-line skeleton-line--short"></span><strong class="skeleton-line skeleton-line--value"></strong></article>').join('');
+  }
+
+  function listSkeleton(count = 4) {
+    return '<div class="fast-start-list">' + Array.from({ length: count }, () => '<article class="fast-start-card"><span class="skeleton-line skeleton-line--title"></span><span class="skeleton-line"></span><span class="skeleton-line skeleton-line--medium"></span></article>').join('') + '</div>';
+  }
+
   function renderStudent() {
+    if (!state.studentPackagesLoaded) {
+      $('studentSummary').innerHTML = summarySkeleton(3);
+      $('packageList').innerHTML = state.studentPackagesError
+        ? `<div class="load-state"><strong>${escapeHtml(state.studentPackagesError)}</strong><button class="secondary-button primary-button--fit" type="button" data-retry-student-home>重新載入</button></div>`
+        : listSkeleton(4);
+      const retry = document.querySelector('[data-retry-student-home]');
+      if (retry) retry.onclick = () => ensureStudentPackages(true).catch(error => showToast(error.message || '課程載入失敗'));
+      return;
+    }
     let total = 0, done = 0;
     state.packages.forEach(pkg => { const s = packageSummary(pkg); total += s.total; done += s.done; });
     const complete = state.packages.filter(pkg => packageSummary(pkg).status === 'complete').length;
@@ -790,7 +864,7 @@
       <article class="summary-card"><span>課程</span><strong>${state.packages.length}</strong></article>
       <article class="summary-card"><span>必修完成</span><strong>${done}/${total}</strong></article>
       <article class="summary-card"><span>課程完成</span><strong>${complete}/${state.packages.length}</strong></article>`;
-    $('packageList').innerHTML = state.packages.length ? state.packages.map(renderPackageCard).join('') : (state.features.lazyDataV114 && !state.studentPackagesLoaded ? '<div class="empty-state"><h3>正在載入課程…</h3></div>' : '<div class="empty-state"><h3>目前沒有指派課程</h3></div>');
+    $('packageList').innerHTML = state.packages.length ? state.packages.map(renderPackageCard).join('') : '<div class="empty-state"><h3>目前沒有指派課程</h3></div>';
     bindStudentPackageEvents();
     if (state.studentTab === 'records') renderStudentRecords();
   }
@@ -1404,6 +1478,16 @@
   function normalLessons(pkg) { return (pkg?.lessons || []).filter(l => l.title !== '__PACKAGE_DIRECT__'); }
 
   function renderAdmin() {
+    if (state.overviewDirty && !(state.adminOverview || []).length && ['people','courses'].includes(state.adminTab)) {
+      $('adminSummary').innerHTML = summarySkeleton(4);
+      const panel = state.adminTab === 'courses' ? $('adminCoursesPanel') : $('adminPeoplePanel');
+      if (panel) panel.innerHTML = state.adminOverviewError
+        ? `<div class="load-state"><strong>${escapeHtml(state.adminOverviewError)}</strong><button class="secondary-button primary-button--fit" type="button" data-retry-admin-overview>重新載入</button></div>`
+        : listSkeleton(6);
+      const retry = document.querySelector('[data-retry-admin-overview]');
+      if (retry) retry.onclick = () => ensureAdminOverview(false).catch(error => showToast(error.message || '無法更新學習紀錄'));
+      return;
+    }
     const people = state.adminOverview || [];
     const assigned = people.reduce((sum, person) => sum + (person.packages || []).length, 0);
     const done = people.reduce((sum, person) => sum + (person.packages || []).filter(pkg => packageSummary(pkg).status === 'complete').length, 0);
@@ -1420,21 +1504,35 @@
     } else if (state.adminTab === 'people') renderAdminPeople();
   }
 
-  async function ensureAdminOverview() {
+  async function ensureAdminOverview(background = false) {
     if (!state.overviewDirty) return state.adminOverview;
     if (state.adminOverviewLoading) return state.adminOverviewLoading;
-    const panel = state.adminTab === 'courses' ? $('adminCoursesPanel') : $('adminPeoplePanel');
-    if (panel) panel.innerHTML = '<div class="empty-state"><h3>更新學習紀錄中…</h3></div>';
+    state.adminOverviewError = '';
+    renderAdmin();
     const task = (async () => {
       try {
         const action = state.features.splitReadV1 ? 'adminTracking' : 'adminOverview';
-        const data = await api(action, {}, state.token, { retry: true, timeout: 12000 });
+        const data = await api(action, {}, state.token, { retry: false, timeout: background ? BACKGROUND_READ_TIMEOUT_MS : FIRST_SCREEN_TIMEOUT_MS });
         state.adminOverview = Array.isArray(data.overview) ? data.overview : [];
         state.overviewDirty = false;
+        state.adminOverviewError = '';
+        if (state.adminOverviewRetryTimer) { clearTimeout(state.adminOverviewRetryTimer); state.adminOverviewRetryTimer = null; }
         renderAdmin();
         return state.adminOverview;
       } catch (error) {
-        showToast(error.message || '無法更新學習紀錄');
+        if (isTransientReadError(error) && state.token) {
+          state.adminOverviewError = '學習狀況載入較慢';
+          renderAdmin();
+          if (!background && !state.adminOverviewRetryTimer) {
+            const token = state.token;
+            state.adminOverviewRetryTimer = setTimeout(() => {
+              state.adminOverviewRetryTimer = null;
+              if (state.token !== token || !state.overviewDirty) return;
+              ensureAdminOverview(true).catch(() => {});
+            }, 700);
+          }
+          return state.adminOverview;
+        }
         throw error;
       } finally {
         state.adminOverviewLoading = null;
@@ -2681,7 +2779,7 @@
     if (state.activeLessonId && !state.previewMode && state.tracker?.dirty) flushProgress(false).catch(() => {});
     stopTracker();
     stopIdleMonitor();
-    state.token = ''; state.user = null; state.areaManagerView = 'tracking'; state.packages = []; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.submissionDeleteChains.clear(); state.selectedAdminContentFile = null; state.apiConnected = false; state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null; state.adminOverviewLoading = null; state.studentLessonInflight.clear(); state.adminTrackingDetailInflight.clear(); state.progressPending.clear(); state.progressSaveInflight.clear(); state.adminPeopleArea = ''; state.adminPeopleCourseId = ''; state.adminPeopleStatus = ''; state.adminCourseId = ''; state.adminCourseArea = ''; state.adminCourseStatus = ''; state.adminCourseStore = ''; state.adminCourseSearch = ''; state.activePackageId = ''; state.activeLessonId = ''; state.previewMode = false; state.activeSubmission = null;
+    state.token = ''; state.user = null; state.areaManagerView = 'tracking'; state.packages = []; state.studentPackagesError = ''; state.adminOverviewError = ''; state.adminOverview = []; state.adminCatalog = { packages: [], learners: [], assignments: [] }; state.submissionCache.clear(); state.submissionInflight.clear(); state.submissionDeleteChains.clear(); state.selectedAdminContentFile = null; state.apiConnected = false; state.adminSubmissionsLoadedAt = 0; state.studentPackagesLoaded = false; state.adminCatalogLoaded = false; state.studentPackagesLoading = null; state.adminCatalogLoading = null; state.adminOverviewLoading = null; state.studentLessonInflight.clear(); state.adminTrackingDetailInflight.clear(); state.progressPending.clear(); state.progressSaveInflight.clear(); state.adminPeopleArea = ''; state.adminPeopleCourseId = ''; state.adminPeopleStatus = ''; state.adminCourseId = ''; state.adminCourseArea = ''; state.adminCourseStatus = ''; state.adminCourseStore = ''; state.adminCourseSearch = ''; state.activePackageId = ''; state.activeLessonId = ''; state.previewMode = false; state.activeSubmission = null;
     clearSession();
     clearViewState();
     clearLastActivity();
