@@ -11,7 +11,7 @@
   <link rel="preconnect" href="https://script.google.com" crossorigin>
   <link rel="preconnect" href="https://www.youtube.com" crossorigin>
   <link rel="dns-prefetch" href="//script.google.com">
-  <link rel="stylesheet" href="styles.css?v=1.0-compact-ui-20260923">
+  <link rel="stylesheet" href="styles.css?v=1.0-unified-ui-20260924">
   <style>
     #studentReportPanel{display:none}
     #studentDashboard:has([data-student-tab="report"].is-active) #studentReportPanel{display:block}
@@ -41,7 +41,7 @@
           <label class="field-group"><span>帳號</span><input id="employeeId" name="employeeId" type="text" autocomplete="username" placeholder="請輸入帳號" required></label>
           <label class="field-group"><span>密碼</span><div class="password-wrap"><input id="password" name="password" type="password" inputmode="text" autocomplete="current-password" autocapitalize="none" autocorrect="off" spellcheck="false" maxlength="4" placeholder="4 碼英數" required><button id="togglePassword" class="icon-button" type="button" aria-label="顯示密碼">顯示</button></div></label>
           <div id="loginMessage" class="form-message form-message--error" role="alert" hidden></div>
-          <button id="loginButton" class="primary-button" type="submit">登入</button><p class="form-hint">登入後若 15 分鐘沒有操作會自動登出；觀看影片或閱讀 PDF 期間視為使用中。</p>
+          <button id="loginButton" class="primary-button" type="submit">登入</button><p class="form-hint">15 分鐘未操作將自動登出。</p>
         </form>
       </section>
 
@@ -59,9 +59,9 @@
           <section id="studentRecordsPanel" class="tab-panel" hidden><div class="panel-heading"><div><h2>學習紀錄</h2></div></div><div id="studentRecordsList" class="record-list"></div></section>
           <section id="studentReportPanel" class="tab-panel" aria-label="紀錄回報" hidden>
             <article class="report-panel-card">
-              <div class="report-panel-head"><div><p class="step-label">紀錄回報</p><h2>實際錄用紀錄回報</h2><p>每完成一位實際錄用請填寫一筆；送出後可立即繼續回報下一筆。</p></div><div class="report-panel-actions"><button id="resetRecordReportButton" class="secondary-button primary-button--fit" type="button">填寫下一筆</button><a class="secondary-button primary-button--fit" href="https://forms.gle/rSCuspJrPx5YmKAp7" target="_blank" rel="noopener">另開問卷</a></div></div>
+              <div class="report-panel-head"><div><h2>實際錄用紀錄回報</h2></div><div class="report-panel-actions"><button id="resetRecordReportButton" class="secondary-button primary-button--fit" type="button">填寫下一筆</button><a class="secondary-button primary-button--fit" href="https://forms.gle/rSCuspJrPx5YmKAp7" target="_blank" rel="noopener">另開問卷</a></div></div>
               <div class="report-frame-wrap"><iframe id="recordReportFrame" class="report-frame" title="實際錄用紀錄回報問卷" src="about:blank" data-src="https://forms.gle/rSCuspJrPx5YmKAp7" loading="lazy" referrerpolicy="strict-origin-when-cross-origin">正在載入問卷…</iframe></div>
-              <p class="report-panel-note">若剛送出一筆要繼續填寫，請按「填寫下一筆」重新載入空白問卷；若裝置無法顯示內嵌問卷，可使用「另開問卷」。</p>
+              <p class="report-panel-note">送出後可按「填寫下一筆」繼續回報。</p>
             </article>
           </section>
         </section>
@@ -69,19 +69,19 @@
         <section id="adminDashboard" hidden>
           <nav class="tab-bar tab-bar--admin" aria-label="教育中心功能"><button class="tab-button is-active" data-admin-tab="people" type="button">依人員查看</button><button class="tab-button" data-admin-tab="courses" type="button">依課程查看</button><button class="tab-button" data-admin-tab="manage" type="button">課程管理</button></nav>
           <section id="adminTrackingPanel" class="tab-panel"><div id="adminSummary" class="summary-grid"></div><form id="adminSearchForm" class="search-bar" onsubmit="return false;"><input id="adminSearch" type="search" placeholder="搜尋帳號、姓名、店別或課程"></form><div id="adminPeoplePanel" class="accordion-list"></div><div id="adminCoursesPanel" class="accordion-list" hidden></div></section>
-          <section id="adminManagePanel" class="tab-panel" hidden><div class="panel-heading manage-heading"><div><h2>課程管理</h2><p class="package-meta">課程可直接放教材，也可建立多個子課程</p></div><div class="manage-heading__actions"><button id="exportProgressButton" class="secondary-button primary-button--fit" type="button">匯出訓練紀錄</button><button id="newPackageButton" class="primary-button primary-button--fit" type="button">＋ 新增課程</button></div></div><div id="adminCatalogSummary" class="summary-grid"></div><div id="adminCatalogList" class="manage-list"></div></section>
+          <section id="adminManagePanel" class="tab-panel" hidden><div class="panel-heading manage-heading"><div><h2>課程管理</h2></div><div class="manage-heading__actions"><button id="exportProgressButton" class="secondary-button primary-button--fit" type="button">匯出訓練紀錄</button><button id="newPackageButton" class="primary-button primary-button--fit" type="button">＋ 新增課程</button></div></div><div id="adminCatalogSummary" class="summary-grid"></div><div id="adminCatalogList" class="manage-list"></div></section>
         </section>
       </section>
     </main>
 
-    <footer class="app-footer"><span>教育中心備援學習平台</span><span>系統版本 V1.0｜Clean Fast 正式版</span></footer>
+    <footer class="app-footer"><span>教育中心備援學習平台</span><span>V1.0</span></footer>
   </div>
 
   <div id="adminEditorOverlay" class="overlay" hidden><section class="sheet-dialog admin-editor-dialog" role="dialog" aria-modal="true" aria-labelledby="adminEditorTitle"><header class="sheet-header"><div><p class="step-label">教育中心</p><h2 id="adminEditorTitle">課程管理</h2></div><button id="closeAdminEditorButton" class="close-button" type="button" aria-label="關閉">×</button></header><div id="adminEditorBody" class="sheet-content"></div></section></div>
   <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
   <script src="api_config.js?v=1.0"></script>
-  <script src="app.js?v=1.0-compact-ui-20260923"></script>
+  <script src="app.js?v=1.0-unified-ui-20260924"></script>
   <script>
     (() => {
       const FORM_URL = 'https://forms.gle/rSCuspJrPx5YmKAp7';
