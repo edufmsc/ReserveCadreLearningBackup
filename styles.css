@@ -264,3 +264,139 @@
     width:100%;
   }
 }
+
+
+/* V1.0 unified compact system UI 2026-09-24 */
+:root{
+  --ui-radius-lg:14px;
+  --ui-radius-md:11px;
+  --ui-gap:8px;
+  --ui-pad:11px;
+}
+.app-main{gap:10px}
+.card{border-radius:var(--ui-radius-lg)}
+.profile-card--compact{padding:11px 13px}
+.profile-topline{align-items:center;gap:10px}
+.profile-topline h2{margin:1px 0 2px;font-size:1.08rem}
+.profile-subline{margin:0;font-size:.76rem}
+.profile-actions{gap:7px;align-items:center}
+
+.tab-bar{
+  gap:5px;
+  padding:5px;
+  margin-top:8px;
+  border-radius:12px;
+}
+.tab-button{
+  min-height:36px;
+  padding:7px 11px;
+  border-radius:9px;
+  font-size:.84rem;
+}
+.tab-panel{padding-top:6px}
+.panel-heading{margin:10px 2px 8px}
+.panel-heading h2{margin:0;font-size:1.05rem}
+
+.search-bar{margin:8px 0}
+.search-bar input,
+.admin-course-search-row input,
+.v1-sub-toolbar input,
+.field-group input,
+.field-group select,
+.field-group textarea{
+  min-height:38px;
+  border-radius:10px;
+}
+.field-group{gap:4px}
+.field-group>span{font-size:.73rem}
+.form-grid{gap:9px}
+.form-hint{margin:7px 0 0;font-size:.72rem;line-height:1.4}
+
+.primary-button,
+.secondary-button{
+  min-height:38px;
+  padding:8px 12px;
+  border-radius:10px;
+}
+.mini-button{
+  min-height:31px;
+  padding:5px 9px;
+  border-radius:8px;
+}
+.text-button{min-height:32px}
+.icon-button{min-height:36px}
+
+.record-list{
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+}
+.record-card{
+  padding:11px;
+  border-radius:13px;
+  box-shadow:none;
+}
+.record-card__top{gap:8px}
+.record-grid{gap:7px}
+.record-grid>div{padding:8px 9px;border-radius:9px}
+
+.manage-list{gap:8px}
+.manage-card{border-radius:13px}
+.manage-card__head{padding:11px 12px;gap:9px}
+.manage-card__title small{margin:2px 0 5px;font-size:.72rem}
+.manage-card__actions{gap:5px}
+.manage-card__body{padding:8px}
+.manage-row{border-radius:10px}
+.manage-row+.manage-row{margin-top:7px}
+.manage-row__top{padding:9px 10px}
+.manage-content{padding:8px 9px}
+.manage-warning{margin-top:5px;padding:6px 8px}
+
+.v1-sub-toolbar{margin:9px 0;gap:7px}
+.v1-sub-list{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:8px;
+}
+.v1-sub-admin-card{
+  margin:0;
+  padding:11px;
+  border-radius:13px;
+  box-shadow:none;
+}
+.v1-file-grid,.v1-uploaded-list{gap:6px;margin:8px 0}
+.v1-file-link,.v1-uploaded-file{padding:7px 9px;border-radius:9px}
+.v1-upload-box{padding:9px;border-radius:10px}
+
+.criteria-panel{padding:9px 10px;border-radius:11px}
+.criteria-list{margin-top:6px}
+.criteria-item{padding:4px 8px}
+.lesson-page{gap:9px}
+.lesson-page__top{padding:11px 12px;border-radius:13px}
+.lesson-page__footer{padding:7px;border-radius:11px}
+.lesson-footer-actions .primary-button,
+.lesson-footer-actions .secondary-button{min-height:42px}
+.lesson-meta{gap:5px}
+.lesson-content{gap:8px}
+
+.empty-state{
+  padding:16px 12px;
+  min-height:0;
+}
+.empty-state h3{margin:0;font-size:.95rem}
+.empty-state p{margin:5px 0 0;font-size:.76rem}
+
+.tag{padding:4px 8px;font-size:.7rem}
+.status-badge,.role-badge{padding:5px 8px;font-size:.7rem}
+
+.app-footer{padding:13px 4px 18px}
+
+@media(max-width:900px){
+  .record-list,.v1-sub-list{grid-template-columns:1fr}
+}
+@media(max-width:680px){
+  .profile-topline{align-items:flex-start}
+  .profile-actions{width:100%;flex-wrap:wrap}
+  .tab-bar{overflow-x:auto;justify-content:flex-start}
+  .tab-button{flex:0 0 auto}
+  .record-card{padding:10px}
+}
