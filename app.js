@@ -716,6 +716,7 @@
     const bootstrap = data.bootstrap || await api('bootstrap', { viewHint }, state.token, { retry: false, timeout: FIRST_SCREEN_TIMEOUT_MS });
     if (generation !== state.authGeneration) return false;
     captureBootstrap(bootstrap);
+    saveSession();
     renderDashboard();
     recordActivity(true);
     startIdleMonitor(false);
@@ -750,6 +751,8 @@
         if (generation !== state.authGeneration) return false;
         if (isSessionExpiredError(error)) {
           if (state.token === restoreToken) state.token = '';
+          state.user = null;
+          state.mode = '';
           clearSession();
           clearViewState();
         } else if (state.token === restoreToken || !state.user) {
@@ -3079,7 +3082,7 @@
     }
     if (fastResult === null) {
       restoreTask.then(ok => {
-        if (!ok && !state.user) {
+        if (!ok && !state.token) {
           $('loginView').hidden = false;
           $('dashboardView').hidden = true;
         }
