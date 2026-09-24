@@ -77,6 +77,7 @@
     "fastStartV2": true,
     "loginFastPathV3": true,
     "trackingSubmissionStatusV1": true,
-    "trackingDetailFastV2": true
+    "trackingDetailFastV2": true,
+    "uxStabilityV1": true
   }
 }
