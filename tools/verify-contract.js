@@ -5,6 +5,7 @@ const contract = JSON.parse(fs.readFileSync('apps-script/contract.json', 'utf8')
 function fail(message) { console.error(message); process.exit(1); }
 
 const frontendVersion = (front.match(/const VERSION = '([^']+)'/) || [])[1];
+const expectedBackendBuild = (front.match(/const EXPECTED_BACKEND_BUILD = '([^']+)'/) || [])[1];
 if (!frontendVersion || frontendVersion !== contract.version) {
   fail(`VERSION mismatch: frontend=${frontendVersion} backend-contract=${contract.version}`);
 }
@@ -40,6 +41,6 @@ for (const action of criticalActions) {
 for (const feature of ['lazyDataV114','batchUploadV114','contentFileUploadV116','submissions','forceComplete','packageDirectSubmissionV116','contentMoveV1','courseReuseV1','fastPathV1','loginRetryV1','splitReadV1','warmSnapshotV1']) {
   if (contract.features?.[feature] !== true) fail(`Required Apps Script feature missing from contract: ${feature}`);
 }
-if (contract.build !== 'V1.0') fail(`Unexpected backend build id: ${contract.build}`);
+if (!expectedBackendBuild || expectedBackendBuild !== contract.build) fail(`Backend build mismatch: frontend=${expectedBackendBuild} contract=${contract.build}`);
 
 console.log(`Contract OK: ${frontendVersion}; frontend actions=${requiredActions.size}; contract actions=${supportedActions.size}; frontend features=${referencedFeatures.size}; build=${contract.build}`);
