@@ -1,6 +1,6 @@
 {
   "version": "V1.0",
-  "build": "V1.0",
+  "build": "UX-STABILITY-V1-20260924",
   "actions": [
     "health",
     "authWarm",
