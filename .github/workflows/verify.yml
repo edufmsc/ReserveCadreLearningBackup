@@ -17,6 +17,8 @@ jobs:
       - name: Syntax check
         run: |
           node --check app.js
+          cp apps-script/Code.gs /tmp/apps-script-Code.js
+          node --check /tmp/apps-script-Code.js
           node --check tools/verify-contract.js
       - name: Structural checks
         run: |
@@ -25,6 +27,7 @@ jobs:
           test -f app.js
           test -f api_config.js
           test -f apps-script/contract.json
+          test -f apps-script/Code.gs
           test -f tools/verify-contract.js
           grep -q "const VERSION = 'V1.0'" app.js
           grep -q "NON_JSON_RESPONSE" app.js
