@@ -2839,6 +2839,23 @@
     document.querySelectorAll('[data-admin-tab]').forEach(button => button.onclick = () => setAdminTab(button.dataset.adminTab));
     $('adminSearch').oninput = scheduleAdminPeopleRender;
     if ($('areaManagerViewToggle')) $('areaManagerViewToggle').onclick = () => setAreaManagerView(state.areaManagerView === 'tracking' ? 'student' : 'tracking');
+    if ($('resetRecordReportButton')) $('resetRecordReportButton').onclick = () => {
+      const frame = $('recordReportFrame');
+      const wrap = $('recordReportFrameWrap');
+      if (!frame) return;
+      if (wrap) wrap.classList.remove('is-loaded');
+      frame.dataset.loaded = '';
+      frame.src = 'about:blank';
+      setTimeout(() => {
+        frame.src = frame.dataset.src || 'about:blank';
+        frame.dataset.loaded = '1';
+      }, 40);
+    };
+    if ($('recordReportFrame')) $('recordReportFrame').onload = () => {
+      const frame = $('recordReportFrame');
+      const wrap = $('recordReportFrameWrap');
+      if (frame?.src && frame.src !== 'about:blank' && wrap) wrap.classList.add('is-loaded');
+    };
     ['pointerdown','keydown','touchstart'].forEach(name => document.addEventListener(name, () => recordActivity(), { passive: true }));
     window.addEventListener('focus', () => {
       if (!checkIdleNow()) recordActivity();
