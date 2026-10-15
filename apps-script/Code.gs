@@ -2,7 +2,7 @@ const APP = Object.freeze({
   SPREADSHEET_ID: '1JRLlGxbxgy3VolwulN3dSfq_ETgn0HrKiOnLhyEYT10',
   TZ: 'Asia/Taipei',
   VERSION: 'V1.0',
-  BUILD: 'UX-STABILITY-V1-20260924',
+  BUILD: 'VIDEO-COVERAGE-V1-20261015',
   SESSION_TTL_SECONDS: 21600,
   SESSION_PROP_PREFIX: 'learning-session-v11-',
   STATIC_CACHE_SECONDS: 60,
@@ -958,7 +958,12 @@ function lessonDto_(lessonRow, contentRows, progressRows) {
   const contents = contentRows.filter(r => clean_(r['子課程ID']) === lessonId)
     .sort((a, b) => number_(a['排序']) - number_(b['排序']))
     .map(r => ({ id: clean_(r['內容ID']), type: clean_(r['類型']), title: clean_(r['標題']), url: clean_(r['URL']), text: clean_(r['文字內容']), enabled: clean_(r['啟用']) !== '否' }));
-  const progress = parseContentProgress_(p['教材進度JSON']);
+  const progressRaw = parseContentProgress_(p['教材進度JSON']);
+  const progress = {};
+  Object.keys(progressRaw).forEach(id => {
+    const item = progressRaw[id] || {};
+    progress[id] = clean_(item.type).toUpperCase() === 'VIDEO' ? normalizeVideoProgress_(item) : item;
+  });
   const dto = {
     id: lessonId, packageId: clean_(lessonRow['母課程ID']), title: clean_(lessonRow['子課程名稱']),
     required: clean_(lessonRow['必修']) === '是', passRule: clean_(lessonRow['通過規則']),
@@ -983,7 +988,10 @@ function lessonCriteria_(lesson) {
   if (hasVideoRequirement) {
     const hasAllVideoDetail = videos.length > 0 && videos.every(v => cp[v.id] && number_(cp[v.id].duration) > 0);
     if (hasAllVideoDetail) {
-      const percents = videos.map(v => { const x = cp[v.id] || {}; return Math.min(100, Math.floor(number_(x.seconds) * 100 / number_(x.duration))); });
+      const percents = videos.map(v => {
+        const x = normalizeVideoProgress_(cp[v.id] || {});
+        return Math.min(100, Math.floor(number_(x.seconds) * 100 / number_(x.duration)));
+      });
       videoPercent = percents.length ? Math.min.apply(null, percents) : 0;
       videoPassed = percents.every(x => x >= lesson.videoPassPercent);
     } else {
@@ -2105,8 +2113,71 @@ function upsertByKey_(sheetName, keyHeader, keyValue, data) {
 
 function packagePublished_(row){const s=clean_(row['發佈狀態']);return !s||s==='已發布';}
 function parseContentProgress_(raw){if(raw&&typeof raw==='object')return raw;try{const x=JSON.parse(clean_(raw)||'{}');return x&&typeof x==='object'?x:{};}catch{return {};}}
-function mergeContentProgress_(base,incoming){const out=JSON.parse(JSON.stringify(base||{}));Object.keys(incoming||{}).forEach(id=>{const a=out[id]||{},b=incoming[id]||{};out[id]={type:clean_(b.type)||clean_(a.type),seconds:Math.max(number_(a.seconds),number_(b.seconds)),duration:Math.max(number_(a.duration),number_(b.duration)),page:Math.max(1,number_(b.page)||number_(a.page)||1),maxPage:Math.max(number_(a.maxPage),number_(b.maxPage)),pages:Math.max(number_(a.pages),number_(b.pages)),confirmed:!!(a.confirmed||b.confirmed)};});return out;}
-function summarizeContentProgress_(cp){let vs=0,vt=0,ps=0;Object.keys(cp||{}).forEach(id=>{const x=cp[id]||{},t=clean_(x.type).toUpperCase();if(t==='VIDEO'){vs+=number_(x.seconds);vt+=number_(x.duration);}if(t==='PDF')ps+=number_(x.seconds);});return {videoSeconds:vs,videoTotalSeconds:vt,pdfSeconds:ps};}
+function normalizeVideoRanges_(ranges,duration){
+  const max=Math.max(0,number_(duration));
+  const cleaned=(Array.isArray(ranges)?ranges:[]).map(pair=>{
+    if(!Array.isArray(pair)||pair.length<2)return null;
+    let start=Math.max(0,number_(pair[0])),end=Math.max(0,number_(pair[1]));
+    if(max>0){start=Math.min(start,max);end=Math.min(end,max);}
+    if(end<=start)return null;
+    return [Math.round(start*10)/10,Math.round(end*10)/10];
+  }).filter(Boolean).sort((a,b)=>a[0]-b[0]);
+  const merged=[];
+  cleaned.forEach(range=>{
+    const last=merged[merged.length-1];
+    if(last&&range[0]<=last[1]+1.25)last[1]=Math.max(last[1],range[1]);
+    else merged.push(range.slice());
+  });
+  return merged;
+}
+function watchedSecondsFromRanges_(ranges,duration){
+  return Math.round(normalizeVideoRanges_(ranges,duration).reduce((sum,range)=>sum+Math.max(0,range[1]-range[0]),0));
+}
+function normalizeVideoProgress_(item){
+  const x=JSON.parse(JSON.stringify(item||{}));
+  x.duration=Math.max(0,number_(x.duration));
+  let ranges=normalizeVideoRanges_(x.watchedRanges,x.duration);
+  // Backward compatibility: existing pre-V2 progress did not store ranges. Preserve the
+  // previously credited seconds once, then all future credit uses unique watched ranges.
+  if(!ranges.length&&number_(x.seconds)>0&&number_(x.coverageVersion)<2&&x.duration>0){
+    ranges=[[0,Math.min(x.duration,number_(x.seconds))]];
+  }
+  x.watchedRanges=ranges;
+  if(ranges.length)x.seconds=Math.min(x.duration||Number.MAX_SAFE_INTEGER,watchedSecondsFromRanges_(ranges,x.duration));
+  else x.seconds=Math.max(0,number_(x.seconds));
+  x.position=Math.max(0,number_(x.position));
+  if(x.duration>0)x.position=Math.min(x.position,x.duration);
+  x.positionUpdatedAt=Math.max(0,number_(x.positionUpdatedAt));
+  x.coverageVersion=2;
+  return x;
+}
+function mergeContentProgress_(base,incoming){
+  const out=JSON.parse(JSON.stringify(base||{}));
+  Object.keys(incoming||{}).forEach(id=>{
+    const a=out[id]||{},b=incoming[id]||{};
+    const type=clean_(b.type)||clean_(a.type);
+    if(type.toUpperCase()==='VIDEO'){
+      const na=normalizeVideoProgress_(a),nb=normalizeVideoProgress_(b);
+      const duration=Math.max(number_(na.duration),number_(nb.duration));
+      const ranges=normalizeVideoRanges_([...(na.watchedRanges||[]),...(nb.watchedRanges||[])],duration);
+      const latestB=number_(nb.positionUpdatedAt)>=number_(na.positionUpdatedAt);
+      out[id]={
+        type:type,
+        seconds:watchedSecondsFromRanges_(ranges,duration),
+        duration:duration,
+        watchedRanges:ranges,
+        position:latestB?number_(nb.position):number_(na.position),
+        positionUpdatedAt:Math.max(number_(na.positionUpdatedAt),number_(nb.positionUpdatedAt)),
+        coverageVersion:2,
+        confirmed:!!(na.confirmed||nb.confirmed)
+      };
+    }else{
+      out[id]={type:type,seconds:Math.max(number_(a.seconds),number_(b.seconds)),duration:Math.max(number_(a.duration),number_(b.duration)),page:Math.max(1,number_(b.page)||number_(a.page)||1),maxPage:Math.max(number_(a.maxPage),number_(b.maxPage)),pages:Math.max(number_(a.pages),number_(b.pages)),confirmed:!!(a.confirmed||b.confirmed)};
+    }
+  });
+  return out;
+}
+function summarizeContentProgress_(cp){let vs=0,vt=0,ps=0;Object.keys(cp||{}).forEach(id=>{const x=cp[id]||{},t=clean_(x.type).toUpperCase();if(t==='VIDEO'){const v=normalizeVideoProgress_(x);vs+=number_(v.seconds);vt+=number_(v.duration);}if(t==='PDF')ps+=number_(x.seconds);});return {videoSeconds:vs,videoTotalSeconds:vt,pdfSeconds:ps};}
 function isYouTubeUrl_(u){return /(?:youtube\.com\/(?:watch|embed|shorts|live)|youtu\.be\/)/i.test(clean_(u));}
 function deleteRowsByPredicate_(sheetName, predicate) {
   const table = table_(sheetName);
