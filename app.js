@@ -3,10 +3,12 @@
 
   const $ = id => document.getElementById(id);
   const VERSION = 'V1.0';
-  const EXPECTED_BACKEND_BUILD = 'UX-STABILITY-V1-20260924';
+  const EXPECTED_BACKEND_BUILD = 'VIDEO-COVERAGE-V1-20261015';
   const SESSION_KEY = 'reserve_learning_v11_session';
   const LEGACY_SESSION_KEYS = ['reserve_cadre_stage4_2_session', 'learning_backup_v1_session'];
   const SYNC_INTERVAL_MS = 120000;
+  const VIDEO_SYNC_INTERVAL_MS = 30000;
+  const VIDEO_RANGE_MERGE_GAP_SECONDS = 1.25;
   const IDLE_LOGOUT_MS = 15 * 60 * 1000;
   const IDLE_WARNING_MS = 14 * 60 * 1000;
   const IDLE_ACTIVITY_KEY = 'reserve_learning_v1_last_activity';
@@ -1042,7 +1044,7 @@
     if (!required) return `<div class="criteria-panel"><strong>完成條件</strong><div class="criteria-list"><span class="criteria-item is-pass">✓ 無額外閱讀門檻</span></div></div>`;
     const percent = n(lesson.criteria?.videoPercent);
     const passed = !!lesson.criteria?.videoPassed;
-    return `<div class="criteria-panel"><strong>完成條件</strong><div class="criteria-list"><span class="criteria-item ${passed ? 'is-pass' : ''}">${passed ? '✓' : '○'} 影片 ${Math.min(100, Math.round(percent))}% / ${n(lesson.videoPassPercent)}%</span></div></div>`;
+    return `<div class="criteria-panel"><strong>完成條件</strong><div class="criteria-list"><span class="criteria-item ${passed ? 'is-pass' : ''}" data-video-criteria><span data-video-criteria-state>${passed ? '✓' : '○'}</span> 影片內容已看 <strong data-video-criteria-percent>${Math.min(100, Math.round(percent))}%</strong> / 需 ${n(lesson.videoPassPercent)}%</span></div></div>`;
   }
 
   function renderLessonPage(preview = false) {
@@ -1079,7 +1081,9 @@
     if (type === 'VIDEO') {
       const id = youtubeId(url);
       if (!id) return `<article class="content-block"><h3>${title}</h3><div class="content-placeholder">影片連結格式不正確</div></article>`;
-      return `<article class="content-block video-content" data-media-block data-content-id="${escapeHtml(item.id)}" data-media-type="VIDEO" data-youtube-id="${escapeHtml(id)}"><h3>${title}</h3><div class="video-player"><div class="video-player__target" id="video_${escapeHtml(item.id)}"><div class="media-lazy-placeholder"><div><strong>載入影片…</strong></div></div></div></div><div class="pdf-status-line"><span>觀看：<strong data-video-time="${escapeHtml(item.id)}">${formatSeconds(progress.seconds || 0)}</strong></span></div></article>`;
+      const percent = n(progress.duration) > 0 ? Math.min(100, Math.floor(n(progress.seconds) * 100 / n(progress.duration))) : 0;
+      const resume = n(progress.position);
+      return `<article class="content-block video-content" data-media-block data-content-id="${escapeHtml(item.id)}" data-media-type="VIDEO" data-youtube-id="${escapeHtml(id)}"><h3>${title}</h3><div class="video-player"><div class="video-player__target" id="video_${escapeHtml(item.id)}"><div class="media-lazy-placeholder"><div><strong>載入影片…</strong></div></div></div></div><div class="pdf-status-line video-status-line"><span>已看：<strong data-video-time="${escapeHtml(item.id)}">${formatSeconds(progress.seconds || 0)}</strong></span><span>覆蓋：<strong data-video-percent="${escapeHtml(item.id)}">${percent}%</strong></span><span data-video-resume="${escapeHtml(item.id)}"${resume > 5 ? '' : ' hidden'}>上次位置：<strong>${formatSeconds(resume)}</strong></span></div></article>`;
     }
     if (type === 'PDF') {
       if (!url) return `<article class="content-block"><h3>${title}</h3><div class="content-placeholder">PDF 尚未設定</div></article>`;
@@ -1255,7 +1259,8 @@
     if (!lesson) return;
     state.tracker = {
       contentProgress: JSON.parse(JSON.stringify(lesson.contentProgress || {})),
-      playingVideos: new Set(), visiblePdfs: new Set(), dirty: false, lastSync: Date.now(), timer: null
+      playingVideos: new Set(), visibleVideos: new Set(), visiblePdfs: new Set(),
+      videoRuntime: new Map(), dirty: false, lastSync: Date.now(), timer: null
     };
     state.tracker.timer = setInterval(tickTracker, 1000);
   }
@@ -1271,12 +1276,126 @@
     state.pdfPageObservers.clear();
   }
 
+  function normalizeVideoRanges(ranges, duration = 0) {
+    if (!Array.isArray(ranges)) return [];
+    const max = Math.max(0, n(duration));
+    const cleaned = ranges.map(pair => {
+      if (!Array.isArray(pair) || pair.length < 2) return null;
+      let start = Math.max(0, n(pair[0])), end = Math.max(0, n(pair[1]));
+      if (max > 0) { start = Math.min(start, max); end = Math.min(end, max); }
+      if (end <= start) return null;
+      return [Math.round(start * 10) / 10, Math.round(end * 10) / 10];
+    }).filter(Boolean).sort((a, b) => a[0] - b[0]);
+    const merged = [];
+    cleaned.forEach(range => {
+      const last = merged[merged.length - 1];
+      if (last && range[0] <= last[1] + VIDEO_RANGE_MERGE_GAP_SECONDS) last[1] = Math.max(last[1], range[1]);
+      else merged.push(range.slice());
+    });
+    return merged;
+  }
+
+  function watchedSecondsFromRanges(ranges) {
+    return Math.round(normalizeVideoRanges(ranges).reduce((sum, range) => sum + Math.max(0, range[1] - range[0]), 0));
+  }
+
+  function ensureVideoCoverageProgress(progress) {
+    if (!progress || typeof progress !== 'object') return progress || {};
+    const duration = n(progress.duration);
+    let ranges = normalizeVideoRanges(progress.watchedRanges, duration);
+    if (!ranges.length && n(progress.seconds) > 0 && duration > 0 && n(progress.coverageVersion) < 2) {
+      ranges = [[0, Math.min(duration, n(progress.seconds))]];
+    }
+    progress.watchedRanges = ranges;
+    if (ranges.length) progress.seconds = Math.min(duration || Number.MAX_SAFE_INTEGER, watchedSecondsFromRanges(ranges));
+    progress.position = Math.max(0, n(progress.position));
+    progress.coverageVersion = 2;
+    return progress;
+  }
+
   function ensureContentProgress(id, type) {
     const tracker = state.tracker;
     if (!tracker) return {};
     tracker.contentProgress[id] = tracker.contentProgress[id] || { type, seconds: 0, duration: 0, confirmed: false };
     tracker.contentProgress[id].type = type;
+    if (type === 'VIDEO') ensureVideoCoverageProgress(tracker.contentProgress[id]);
     return tracker.contentProgress[id];
+  }
+
+  function addWatchedVideoRange(progress, start, end) {
+    if (!progress || end <= start) return false;
+    const before = watchedSecondsFromRanges(progress.watchedRanges || []);
+    progress.watchedRanges = normalizeVideoRanges([...(progress.watchedRanges || []), [start, end]], progress.duration);
+    const after = watchedSecondsFromRanges(progress.watchedRanges);
+    progress.seconds = Math.min(n(progress.duration) || Number.MAX_SAFE_INTEGER, after);
+    progress.coverageVersion = 2;
+    return after > before;
+  }
+
+  function updateVideoProgressUi(id, progress) {
+    const seconds = n(progress?.seconds), duration = n(progress?.duration);
+    const percent = duration > 0 ? Math.min(100, Math.floor(seconds * 100 / duration)) : 0;
+    const timeEl = document.querySelector(`[data-video-time="${CSS.escape(id)}"]`);
+    if (timeEl) timeEl.textContent = formatSeconds(seconds);
+    const percentEl = document.querySelector(`[data-video-percent="${CSS.escape(id)}"]`);
+    if (percentEl) percentEl.textContent = `${percent}%`;
+    const resumeEl = document.querySelector(`[data-video-resume="${CSS.escape(id)}"]`);
+    if (resumeEl) {
+      resumeEl.hidden = n(progress?.position) <= 5;
+      const strong = resumeEl.querySelector('strong');
+      if (strong) strong.textContent = formatSeconds(progress?.position || 0);
+    }
+    updateLiveVideoCriteria();
+  }
+
+  function updateLiveVideoCriteria() {
+    const { lesson } = activeLesson();
+    const tracker = state.tracker;
+    if (!lesson || !tracker || lesson.videoPassPercent == null) return;
+    const videos = (lesson.contents || []).filter(item => clean(item.type).toUpperCase() === 'VIDEO' && item.enabled !== false);
+    const percents = videos.map(item => {
+      const p = ensureVideoCoverageProgress(tracker.contentProgress[item.id] || {});
+      return n(p.duration) > 0 ? Math.min(100, Math.floor(n(p.seconds) * 100 / n(p.duration))) : 0;
+    });
+    const percent = percents.length ? Math.min(...percents) : 0;
+    const passed = percents.length > 0 && percents.every(value => value >= n(lesson.videoPassPercent));
+    lesson.criteria = { ...(lesson.criteria || {}), videoPercent: percent, videoPassed: passed, allPassed: passed };
+    const item = document.querySelector('[data-video-criteria]');
+    if (item) {
+      item.classList.toggle('is-pass', passed);
+      const stateEl = item.querySelector('[data-video-criteria-state]');
+      const percentEl = item.querySelector('[data-video-criteria-percent]');
+      if (stateEl) stateEl.textContent = passed ? '✓' : '○';
+      if (percentEl) percentEl.textContent = `${percent}%`;
+    }
+  }
+
+  function captureVideoProgress(id, player, options = {}) {
+    const tracker = state.tracker;
+    if (!tracker || !player) return;
+    const progress = ensureContentProgress(id, 'VIDEO');
+    const now = Date.now();
+    const current = Math.max(0, n(player.getCurrentTime?.()));
+    const duration = Math.max(n(progress.duration), n(player.getDuration?.()));
+    if (duration > 0) progress.duration = duration;
+    ensureVideoCoverageProgress(progress);
+    const runtime = tracker.videoRuntime.get(id);
+    const visible = document.visibilityState === 'visible' && tracker.visibleVideos.has(id);
+    if (runtime?.playing && visible && options.credit !== false) {
+      const wallDelta = Math.max(0.05, (now - runtime.at) / 1000);
+      const mediaDelta = current - runtime.position;
+      const rate = Math.max(0.25, n(player.getPlaybackRate?.()) || 1);
+      const expected = wallDelta * rate;
+      const tolerance = Math.max(1.25, expected * 0.55);
+      if (mediaDelta > 0.05 && Math.abs(mediaDelta - expected) <= tolerance) {
+        if (addWatchedVideoRange(progress, runtime.position, current)) tracker.dirty = true;
+      }
+    }
+    progress.position = duration > 0 ? Math.min(current, duration) : current;
+    progress.positionUpdatedAt = now;
+    tracker.videoRuntime.set(id, { position: current, at: now, playing: options.playing ?? runtime?.playing ?? false });
+    tracker.dirty = true;
+    updateVideoProgressUi(id, progress);
   }
 
   function tickTracker() {
@@ -1284,14 +1403,8 @@
     if (!tracker) return;
     if (tracker.playingVideos.size || tracker.visiblePdfs.size) recordActivity();
     tracker.playingVideos.forEach(id => {
-      const progress = ensureContentProgress(id, 'VIDEO');
       const player = state.youtubePlayers.get(id);
-      const duration = player ? n(player.getDuration?.()) : 0;
-      if (duration > 0) progress.duration = Math.max(n(progress.duration), duration);
-      progress.seconds = Math.min(progress.duration || Number.MAX_SAFE_INTEGER, n(progress.seconds) + 1);
-      tracker.dirty = true;
-      const el = document.querySelector(`[data-video-time="${CSS.escape(id)}"]`);
-      if (el) el.textContent = formatSeconds(progress.seconds);
+      if (player) captureVideoProgress(id, player, { playing: true });
     });
     tracker.visiblePdfs.forEach(id => {
       const progress = ensureContentProgress(id, 'PDF');
@@ -1300,7 +1413,9 @@
       const el = document.querySelector(`[data-pdf-time="${CSS.escape(id)}"]`);
       if (el) el.textContent = formatSeconds(progress.seconds);
     });
-    if (tracker.dirty && Date.now() - tracker.lastSync >= SYNC_INTERVAL_MS) flushProgress(false);
+    const now = Date.now();
+    if (tracker.dirty && tracker.playingVideos.size && now - tracker.lastSync >= VIDEO_SYNC_INTERVAL_MS) flushProgress(false);
+    else if (tracker.dirty && now - tracker.lastSync >= SYNC_INTERVAL_MS) flushProgress(false);
   }
 
   function snapshotContentProgress(contentProgress) {
@@ -1432,12 +1547,31 @@
           onReady: event => {
             const p = ensureContentProgress(id, 'VIDEO');
             p.duration = Math.max(n(p.duration), n(event.target.getDuration()));
-            if (state.tracker) state.tracker.dirty = true;
+            ensureVideoCoverageProgress(p);
+            if (n(p.position) > 5 && n(p.position) < n(p.duration) - 3) {
+              try { event.target.seekTo(n(p.position), true); } catch {}
+            }
+            if (state.tracker) {
+              state.tracker.videoRuntime.set(id, { position: n(p.position), at: Date.now(), playing: false });
+              state.tracker.dirty = true;
+            }
+            updateVideoProgressUi(id, p);
           },
           onStateChange: event => {
-            if (!state.tracker) return;
-            if (event.data === YT.PlayerState.PLAYING) state.tracker.playingVideos.add(id);
-            else state.tracker.playingVideos.delete(id);
+            const tracker = state.tracker;
+            if (!tracker) return;
+            if (event.data === YT.PlayerState.PLAYING) {
+              state.youtubePlayers.forEach((other, otherId) => {
+                if (otherId !== id) { try { if (other.getPlayerState?.() === YT.PlayerState.PLAYING) other.pauseVideo(); } catch {} }
+              });
+              tracker.playingVideos.add(id);
+              tracker.videoRuntime.set(id, { position: Math.max(0, n(event.target.getCurrentTime?.())), at: Date.now(), playing: true });
+              recordActivity();
+            } else {
+              captureVideoProgress(id, event.target, { playing: false });
+              tracker.playingVideos.delete(id);
+              if (event.data === YT.PlayerState.PAUSED || event.data === YT.PlayerState.ENDED) flushProgress(false).catch(() => {});
+            }
           }
         }
       });
@@ -1455,6 +1589,10 @@
         const id = block.dataset.contentId;
         const type = block.dataset.mediaType;
         if (type === 'VIDEO' && entry.isIntersecting) mountYoutube(block);
+        if (type === 'VIDEO' && state.tracker) {
+          if (entry.isIntersecting && entry.intersectionRatio >= 0.25) state.tracker.visibleVideos.add(id);
+          else state.tracker.visibleVideos.delete(id);
+        }
         if (type === 'PDF' && entry.isIntersecting) mountPdf(block);
         if (type === 'PDF' && state.tracker) {
           if (entry.isIntersecting && entry.intersectionRatio >= 0.25) state.tracker.visiblePdfs.add(id);
@@ -3028,6 +3166,16 @@
     document.addEventListener('visibilitychange', () => {
       if (document.hidden) {
         saveViewState();
+        if (state.tracker) {
+          state.tracker.playingVideos.forEach(id => {
+            const player = state.youtubePlayers.get(id);
+            if (player) {
+              captureVideoProgress(id, player, { playing: false });
+              try { player.pauseVideo(); } catch {}
+            }
+          });
+          state.tracker.playingVideos.clear();
+        }
         if (state.tracker?.dirty) flushProgress(false);
       } else {
         if (!checkIdleNow()) recordActivity();
