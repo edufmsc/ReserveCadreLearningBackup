@@ -1,6 +1,6 @@
 {
   "version": "V1.0",
-  "build": "UX-STABILITY-V1-20260924",
+  "build": "VIDEO-COVERAGE-V1-20261015",
   "actions": [
     "health",
     "authWarm",
@@ -78,6 +78,7 @@
     "loginFastPathV3": true,
     "trackingSubmissionStatusV1": true,
     "trackingDetailFastV2": true,
-    "uxStabilityV1": true
+    "uxStabilityV1": true,
+    "videoCoverageV1": true
   }
 }
