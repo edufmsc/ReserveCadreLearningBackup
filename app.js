@@ -1473,8 +1473,17 @@
     [...state.progressPending.keys()].forEach(lessonId => drainProgressSave(lessonId, false).catch(() => {}));
   }
 
+  function captureAllVideoProgress() {
+    const tracker = state.tracker;
+    if (!tracker) return;
+    state.youtubePlayers.forEach((player, id) => {
+      try { captureVideoProgress(id, player, { playing: tracker.playingVideos.has(id) }); } catch {}
+    });
+  }
+
   function flushProgressKeepalive() {
     if (!configured() || !state.token || state.previewMode) return;
+    captureAllVideoProgress();
     const tracker = state.tracker;
     const { lesson } = activeLesson();
     if (tracker && lesson && tracker.dirty) {
@@ -1650,6 +1659,7 @@
   }
 
   async function closeLesson(save = true) {
+    if (save && !state.previewMode) captureAllVideoProgress();
     if (save && !state.previewMode && state.tracker?.dirty) {
       // 返回課程不等待網路；進度在背景補寫，操作畫面立即切回。
       flushProgress(true).catch(error => showToast(error.message || '進度稍後再同步'));
