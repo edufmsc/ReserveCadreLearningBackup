@@ -504,3 +504,18 @@
   .admin-lesson-row{grid-template-columns:1fr}
   .admin-lesson-meta{text-align:left}
 }
+
+
+/* Video verified coverage */
+.video-status-line{
+  display:flex;
+  flex-wrap:wrap;
+  gap:8px 14px;
+  align-items:center;
+}
+.video-status-line span{
+  white-space:nowrap;
+}
+.video-status-line strong{
+  font-variant-numeric:tabular-nums;
+}
