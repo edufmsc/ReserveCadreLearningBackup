@@ -1047,9 +1047,158 @@
     return `<div class="criteria-panel"><strong>完成條件</strong><div class="criteria-list"><span class="criteria-item ${passed ? 'is-pass' : ''}" data-video-criteria><span data-video-criteria-state>${passed ? '✓' : '○'}</span> 影片內容已看 <strong data-video-criteria-percent>${Math.min(100, Math.round(percent))}%</strong> / 需 ${n(lesson.videoPassPercent)}%</span></div></div>`;
   }
 
+  function renderPdfLibrary(items) {
+    const searchable = items.length >= 6;
+    const rows = items.map((item, index) => {
+      const time = Math.max(0, n(trackerProgress(item).seconds));
+      return `<button type="button" class="pdf-library__item" data-pdf-library-item="${escapeHtml(item.id)}" aria-pressed="false">
+        <span class="pdf-library__number">${index + 1}.</span>
+        <span class="pdf-library__name">${escapeHtml(item.title || 'PDF 教材')}</span>
+        <small class="pdf-library__time" data-pdf-library-time="${escapeHtml(item.id)}">${time ? `已讀 ${formatSeconds(time)}` : '尚未閱讀'}</small>
+      </button>`;
+    }).join('');
+    return `<section class="pdf-library" data-pdf-library aria-label="PDF 教材清單">
+      <div class="pdf-library__collection">
+        <div class="pdf-library__heading"><strong>PDF 教材</strong><span data-pdf-library-count>${items.length} 份</span></div>
+        ${searchable ? '<input type="search" class="pdf-library__search" data-pdf-library-search aria-label="搜尋教材名稱或編號" placeholder="搜尋教材名稱或編號" autocomplete="off">' : ''}
+        <div class="pdf-library__list" data-pdf-library-list aria-label="可選擇的 PDF 教材">${rows}</div>
+        <div class="pdf-library__no-results" data-pdf-library-no-results hidden>找不到符合的教材</div>
+      </div>
+      <div class="pdf-library__reader" data-pdf-library-reader>
+        <div class="pdf-library__empty" data-pdf-library-placeholder>從清單選一份 PDF，才會載入閱讀器。</div>
+        <div data-pdf-library-active hidden>
+          <div class="pdf-library__reader-head">
+            <div class="pdf-library__reader-title"><small data-pdf-library-position></small><strong data-pdf-library-title></strong></div>
+            <div class="pdf-library__reader-actions">
+              <button type="button" class="mini-button" data-pdf-library-nav="-1">上一份</button>
+              <button type="button" class="mini-button" data-pdf-library-nav="1">下一份</button>
+              <button type="button" class="mini-button" data-pdf-library-close>收起</button>
+            </div>
+          </div>
+          <div data-pdf-library-viewer></div>
+        </div>
+      </div>
+    </section>`;
+  }
+
+  function disposePdfBlock(block) {
+    if (!block) return;
+    block._pdfDisposed = true;
+    if (state.mediaObserver) {
+      try { state.mediaObserver.unobserve(block); } catch {}
+    }
+    if (state.tracker) state.tracker.visiblePdfs.delete(block.dataset.contentId);
+    if (block._pdfPageObserver) {
+      try { block._pdfPageObserver.disconnect(); } catch {}
+      state.pdfPageObservers.delete(block._pdfPageObserver);
+      block._pdfPageObserver = null;
+    }
+    if (block._pdfDocument) {
+      const pdf = block._pdfDocument;
+      block._pdfDocument = null;
+      try { Promise.resolve(pdf.destroy()).catch(() => {}); } catch {}
+    }
+  }
+
+  function bindPdfLibrary() {
+    const library = $('lessonContent').querySelector('[data-pdf-library]');
+    if (!library) return;
+    const { lesson } = activeLesson();
+    const items = (lesson?.contents || []).filter(item => item.enabled !== false && clean(item.type).toUpperCase() === 'PDF');
+    const byId = new Map(items.map(item => [clean(item.id), item]));
+    const list = library.querySelector('[data-pdf-library-list]');
+    const viewer = library.querySelector('[data-pdf-library-viewer]');
+    const active = library.querySelector('[data-pdf-library-active]');
+    const placeholder = library.querySelector('[data-pdf-library-placeholder]');
+    const title = library.querySelector('[data-pdf-library-title]');
+    const position = library.querySelector('[data-pdf-library-position]');
+    const previous = library.querySelector('[data-pdf-library-nav="-1"]');
+    const next = library.querySelector('[data-pdf-library-nav="1"]');
+    const count = library.querySelector('[data-pdf-library-count]');
+    let selected = '';
+    const allRows = [...list.querySelectorAll('[data-pdf-library-item]')];
+    const visibleRows = () => allRows.filter(row => !row.hidden);
+    const syncNavigation = () => {
+      const rows = visibleRows();
+      const index = rows.findIndex(row => row.dataset.pdfLibraryItem === selected);
+      previous.disabled = !rows.length || index <= 0;
+      next.disabled = !rows.length || index >= rows.length - 1;
+      if (index < 0) next.disabled = !rows.length;
+    };
+    const close = () => {
+      const old = viewer.querySelector('[data-media-block]');
+      if (old) disposePdfBlock(old);
+      viewer.replaceChildren();
+      selected = '';
+      active.hidden = true;
+      placeholder.hidden = false;
+      allRows.forEach(row => {
+        row.classList.remove('is-active');
+        row.setAttribute('aria-pressed', 'false');
+      });
+      syncNavigation();
+    };
+    const open = (id, scrollOnMobile = true) => {
+      const item = byId.get(clean(id));
+      if (!item) return;
+      if (selected === clean(id) && !active.hidden) return;
+      const old = viewer.querySelector('[data-media-block]');
+      if (old) disposePdfBlock(old);
+      selected = clean(id);
+      active.hidden = false;
+      placeholder.hidden = true;
+      title.textContent = item.title || 'PDF 教材';
+      position.textContent = `${items.findIndex(entry => clean(entry.id) === selected) + 1} / ${items.length}`;
+      allRows.forEach(row => {
+        const current = row.dataset.pdfLibraryItem === selected;
+        row.classList.toggle('is-active', current);
+        row.setAttribute('aria-pressed', String(current));
+      });
+      viewer.innerHTML = renderContentBlock(item);
+      const block = viewer.querySelector('[data-media-block]');
+      if (block) {
+        if (state.mediaObserver) state.mediaObserver.observe(block);
+        mountPdf(block);
+      }
+      syncNavigation();
+      if (scrollOnMobile && window.matchMedia('(max-width: 900px)').matches) {
+        requestAnimationFrame(() => active.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+      }
+    };
+    list.addEventListener('click', event => {
+      const row = event.target.closest('[data-pdf-library-item]');
+      if (row && list.contains(row)) open(row.dataset.pdfLibraryItem);
+    });
+    const search = library.querySelector('[data-pdf-library-search]');
+    if (search) search.addEventListener('input', () => {
+      const query = clean(search.value).normalize('NFKC').toLocaleLowerCase();
+      allRows.forEach(row => {
+        const item = byId.get(row.dataset.pdfLibraryItem);
+        row.hidden = !!query && !(item?.title || '').normalize('NFKC').toLocaleLowerCase().includes(query);
+      });
+      const shown = visibleRows().length;
+      count.textContent = query ? `${shown} / ${items.length} 份` : `${items.length} 份`;
+      library.querySelector('[data-pdf-library-no-results]').hidden = shown !== 0;
+      syncNavigation();
+    });
+    library.querySelector('[data-pdf-library-close]').onclick = close;
+    [previous, next].forEach(button => {
+      button.onclick = () => {
+        const rows = visibleRows();
+        const index = rows.findIndex(row => row.dataset.pdfLibraryItem === selected);
+        const step = Number(button.dataset.pdfLibraryNav);
+        const target = rows[index < 0 ? 0 : index + step];
+        if (target) open(target.dataset.pdfLibraryItem, false);
+      };
+    });
+    syncNavigation();
+  }
+
   function renderLessonPage(preview = false) {
     const { pkg, lesson } = activeLesson();
     if (!pkg || !lesson) return;
+    const previous = $('lessonContent').querySelector('[data-pdf-library-viewer] [data-media-block]');
+    if (previous) disposePdfBlock(previous);
     $('studentDashboard').hidden = true;
     $('adminDashboard').hidden = true;
     $('lessonPage').hidden = false;
@@ -1057,9 +1206,23 @@
     $('lessonTitle').textContent = visibleLessonTitle(lesson);
     $('lessonMeta').innerHTML = (preview ? '<div class="preview-banner">學員視角預覽</div>' : '') + `<span class="tag">${escapeHtml(contentTypes(lesson))}</span><span class="tag ${lesson.required ? 'tag--warning' : 'tag--muted'}">${lesson.required ? '必修' : '選修'}</span>`;
     const contents = (lesson.contents || []).filter(c => c.enabled !== false);
-    $('lessonContent').innerHTML = buildCriteria(lesson) + (contents.length ? contents.map(renderContentBlock).join('') : '<div class="content-placeholder">尚未設定教材</div>');
+    const pdfs = contents.filter(item => clean(item.type).toUpperCase() === 'PDF');
+    let html = '';
+    if (pdfs.length >= 2) {
+      let added = false;
+      html = contents.map(item => {
+        if (clean(item.type).toUpperCase() === 'PDF') {
+          if (added) return '';
+          added = true;
+          return renderPdfLibrary(pdfs);
+        }
+        return renderContentBlock(item);
+      }).join('');
+    } else html = contents.map(renderContentBlock).join('');
+    $('lessonContent').innerHTML = buildCriteria(lesson) + (html || '<div class="content-placeholder">尚未設定教材</div>');
     updateLessonFooter(lesson, preview);
     bindLessonMedia();
+    bindPdfLibrary();
     bindDownloadButtons();
     if (!preview && lesson.submissionMode && lesson.submissionMode !== '不需要' && state.features.submissions) renderStudentSubmissionShell(lesson);
     window.scrollTo({ top: 0, behavior: 'auto' });
@@ -1175,7 +1338,7 @@
   }
 
   async function mountPdf(block) {
-    if (!block || block.dataset.loaded === '1') return;
+    if (!block || block._pdfDisposed || block.dataset.loaded === '1') return;
     block.dataset.loaded = '1';
     const contentId = block.dataset.contentId;
     const pdfUrl = clean(block.dataset.pdfUrl);
@@ -1187,12 +1350,23 @@
       // 這樣可移除 Drive 自帶的「彈出式視窗」控制項，且手機/電腦閱讀介面一致。
       host.classList.remove('pdf-drive-shell');
       let data = state.pdfCache.get(contentId);
-      if (!data) {
-        data = await api('getPdfContent', { contentId }, state.token, { timeout: 60000 });
+      if (data) {
+        state.pdfCache.delete(contentId);
         state.pdfCache.set(contentId, data);
+      } else {
+        data = await api('getPdfContent', { contentId }, state.token, { retry: false, timeout: 30000 });
+        state.pdfCache.set(contentId, data);
+        while (state.pdfCache.size > 3) state.pdfCache.delete(state.pdfCache.keys().next().value);
       }
+      if (block._pdfDisposed || !block.isConnected) return;
       const pdfjs = await loadPdfJs();
+      if (block._pdfDisposed || !block.isConnected) return;
       const pdf = await pdfjs.getDocument({ data: base64Bytes(data.base64) }).promise;
+      if (block._pdfDisposed || !block.isConnected) {
+        try { await pdf.destroy(); } catch {}
+        return;
+      }
+      block._pdfDocument = pdf;
       host.innerHTML = '<div class="pdf-canvas-stack"></div>';
       const stack = host.firstElementChild;
       const available = Math.max(280, host.clientWidth - 28);
@@ -1220,8 +1394,10 @@
         if (entry.isIntersecting) renderPage(entry.target).catch(() => {});
       }), { root: host, rootMargin: '900px 0px', threshold: 0.01 });
       state.pdfPageObservers.add(observer);
+      block._pdfPageObserver = observer;
 
       const firstPage = await pdf.getPage(1);
+      if (block._pdfDisposed || !block.isConnected) return;
       const firstViewport = firstPage.getViewport({ scale: 1 });
       const firstCssScale = Math.min(2, available / firstViewport.width);
       const estimatedWidth = Math.max(1, Math.floor(firstViewport.width * firstCssScale));
@@ -1247,8 +1423,11 @@
       const first = stack.querySelector('.pdf-page-wrap');
       if (first) renderPage(first).catch(() => {});
     } catch (error) {
+      if (block._pdfDisposed || !block.isConnected) return;
       block.dataset.loaded = '0';
-      host.innerHTML = `<div class="content-placeholder">PDF 載入失敗：${escapeHtml(error.message || '請確認檔案權限')}</div>`;
+      host.innerHTML = `<div class="content-placeholder pdf-error"><span>PDF 載入失敗：${escapeHtml(error.message || '請確認檔案權限')}</span><button type="button" class="mini-button" data-retry-pdf>重新載入</button></div>`;
+      const retry = host.querySelector('[data-retry-pdf]');
+      if (retry) retry.onclick = () => mountPdf(block);
     }
   }
 
@@ -1266,6 +1445,7 @@
   }
 
   function stopTracker() {
+    document.querySelectorAll('.pdf-content[data-media-block]').forEach(disposePdfBlock);
     if (state.tracker?.timer) clearInterval(state.tracker.timer);
     state.tracker = null;
     state.youtubePlayers.forEach(player => { try { player.destroy(); } catch {} });
@@ -1412,6 +1592,8 @@
       tracker.dirty = true;
       const el = document.querySelector(`[data-pdf-time="${CSS.escape(id)}"]`);
       if (el) el.textContent = formatSeconds(progress.seconds);
+      const listTime = document.querySelector(`[data-pdf-library-time="${CSS.escape(id)}"]`);
+      if (listTime) listTime.textContent = '已讀 ' + formatSeconds(progress.seconds);
     });
     const now = Date.now();
     if (tracker.dirty && tracker.playingVideos.size && now - tracker.lastSync >= VIDEO_SYNC_INTERVAL_MS) flushProgress(false);
