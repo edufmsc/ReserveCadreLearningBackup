@@ -3,7 +3,7 @@
 
   const $ = id => document.getElementById(id);
   const VERSION = 'V1.0';
-  const EXPECTED_BACKEND_BUILD = 'VIDEO-COVERAGE-V1-20261015';
+  const EXPECTED_BACKEND_BUILD = 'PDF-DISPLAY-CONTROL-V1-20261029';
   const SESSION_KEY = 'reserve_learning_v11_session';
   const LEGACY_SESSION_KEYS = ['reserve_cadre_stage4_2_session', 'learning_backup_v1_session'];
   const SYNC_INTERVAL_MS = 120000;
@@ -1194,6 +1194,14 @@
     syncNavigation();
   }
 
+  function pdfModeForPackage(pkg) {
+    // Compatibility for the newly imported FCC document library until GAS is deployed.
+    // Every other legacy course remains in its original expanded-PDF mode.
+    const mode = clean(pkg?.pdfDisplayMode);
+    if (mode === '清單點選' || mode === '直接展開') return mode;
+    return clean(pkg?.id) === 'PKG8C2B197C20' ? '清單點選' : '直接展開';
+  }
+
   function renderLessonPage(preview = false) {
     const { pkg, lesson } = activeLesson();
     if (!pkg || !lesson) return;
@@ -1208,7 +1216,7 @@
     const contents = (lesson.contents || []).filter(c => c.enabled !== false);
     const pdfs = contents.filter(item => clean(item.type).toUpperCase() === 'PDF');
     let html = '';
-    if (pdfs.length >= 2) {
+    if (pdfs.length && pdfModeForPackage(pkg) === '清單點選') {
       let added = false;
       html = contents.map(item => {
         if (clean(item.type).toUpperCase() === 'PDF') {
@@ -2399,7 +2407,7 @@
     const directRow = direct && ((direct.contents || []).length || (direct.submissionMode && direct.submissionMode !== '不需要')) ? renderManageLesson(direct, true) : '';
     const normal = normalLessons(pkg).sort((a,b) => n(a.sort) - n(b.sort));
     const lessonRows = normal.map((lesson,index) => renderManageLesson(lesson, false, { first:index===0, last:index===normal.length-1 })).join('');
-    const manageMeta = [clean(pkg.description), adminEnabledText(pkg.enabled), `已指派 ${activeAssign} 人`].filter(Boolean).join('｜');
+    const manageMeta = [clean(pkg.description), adminEnabledText(pkg.enabled), pdfModeForPackage(pkg) === '清單點選' ? 'PDF：清單點選' : '', `已指派 ${activeAssign} 人`].filter(Boolean).join('｜');
     return `<article class="manage-card"><div class="manage-card__head"><div class="manage-card__title"><strong>${escapeHtml(pkg.title)}</strong><small>${escapeHtml(manageMeta)}</small><div style="margin-top:7px">${publishBadge(pkg)}</div>${errors.length ? `<div class="manage-warning">${escapeHtml(errors.slice(0,3).join('；'))}${errors.length > 3 ? '…' : ''}</div>` : ''}</div>
       <div class="manage-card__actions"><button class="mini-button" type="button" data-toggle-manage="${escapeHtml(pkg.id)}">${open ? '收合' : '展開'}</button><button class="mini-button" type="button" data-preview-package="${escapeHtml(pkg.id)}">預覽</button><button class="mini-button" type="button" data-edit-package="${escapeHtml(pkg.id)}">編輯</button>${state.features.courseReuseV1 ? `<button class="mini-button" type="button" data-copy-package="${escapeHtml(pkg.id)}">複製課程</button>` : ''}<button class="mini-button" type="button" data-add-package-content="${escapeHtml(pkg.id)}">＋教材</button>${state.features.courseReuseV1 ? `<button class="mini-button" type="button" data-library-package="${escapeHtml(pkg.id)}">從既有教材選用</button>` : ''}${state.features.packageDirectSubmissionV116 ? `<button class="mini-button" type="button" data-direct-submission="${escapeHtml(pkg.id)}">回傳設定</button>` : ''}<button class="mini-button" type="button" data-add-lesson="${escapeHtml(pkg.id)}">＋子課程</button><button class="mini-button" type="button" data-assign-package="${escapeHtml(pkg.id)}">批次指派</button>${pkg.publishState === '已發布' ? `<button class="mini-button" type="button" data-draft-package="${escapeHtml(pkg.id)}">轉草稿</button>` : `<button class="mini-button" type="button" data-publish-package="${escapeHtml(pkg.id)}">發布</button>`}<button class="mini-button mini-button--danger" type="button" data-delete-package="${escapeHtml(pkg.id)}">刪除／封存</button></div></div>
       <div class="manage-card__body" data-manage-body="${escapeHtml(pkg.id)}" ${open ? '' : 'hidden'}>${directRow}${lessonRows || '<div class="manage-empty">尚未建立子課程</div>'}</div></article>`;
@@ -2488,7 +2496,9 @@
 
   function openPackageEditor(pkg) {
     pkg = pkg || { title: '', description: '', enabled: true, sort: catalogPackages().length + 1, publishState: '草稿', completionRule: '所有必修子課程完成' };
-    showAdminEditor(pkg.id ? '編輯課程' : '新增課程', `<form id="adminEditForm" class="admin-form" data-admin-form="package"><input type="hidden" id="editId" value="${escapeHtml(pkg.id || '')}"><input type="hidden" id="editPublishState" value="${escapeHtml(pkg.publishState || '草稿')}"><div class="form-grid">${field('課程名稱', 'editTitle', pkg.title, 'text', 'required')}${field('排序', 'editSort', pkg.sort || 1, 'number', 'min="1" required')}<label class="field-group field-group--wide"><span>簡短說明</span><textarea id="editDescription">${escapeHtml(pkg.description || '')}</textarea></label><label class="field-group"><span>課程完成規則</span><select id="editCompletionRule"><option value="所有必修子課程完成" ${pkg.completionRule !== '任一必修子課程完成' ? 'selected' : ''}>所有必修子課程完成</option><option value="任一必修子課程完成" ${pkg.completionRule === '任一必修子課程完成' ? 'selected' : ''}>任一必修子課程完成</option></select></label><label class="field-group"><span>啟用</span><select id="editEnabled">${yesNoSelect(pkg.enabled)}</select></label></div><p class="form-hint">「任一必修完成」適合分流課程。</p><div class="form-actions"><button class="secondary-button" type="button" data-cancel-editor>取消</button><button class="primary-button" type="submit">儲存</button></div></form>`);
+    const pdfMode = pdfModeForPackage(pkg);
+    const modeReady = state.features.pdfDisplayModeV1 === true;
+    showAdminEditor(pkg.id ? '編輯課程' : '新增課程', `<form id="adminEditForm" class="admin-form" data-admin-form="package"><input type="hidden" id="editId" value="${escapeHtml(pkg.id || '')}"><input type="hidden" id="editPublishState" value="${escapeHtml(pkg.publishState || '草稿')}"><div class="form-grid">${field('課程名稱', 'editTitle', pkg.title, 'text', 'required')}${field('排序', 'editSort', pkg.sort || 1, 'number', 'min="1" required')}<label class="field-group field-group--wide"><span>簡短說明</span><textarea id="editDescription">${escapeHtml(pkg.description || '')}</textarea></label><label class="field-group"><span>課程完成規則</span><select id="editCompletionRule"><option value="所有必修子課程完成" ${pkg.completionRule !== '任一必修子課程完成' ? 'selected' : ''}>所有必修子課程完成</option><option value="任一必修子課程完成" ${pkg.completionRule === '任一必修子課程完成' ? 'selected' : ''}>任一必修子課程完成</option></select></label><label class="field-group"><span>啟用</span><select id="editEnabled">${yesNoSelect(pkg.enabled)}</select></label><label class="field-group"><span>PDF 顯示方式</span><select id="editPdfDisplayMode" ${modeReady ? '' : 'disabled'}><option value="直接展開" ${pdfMode === '直接展開' ? 'selected' : ''}>直接展開（原本方式）</option><option value="清單點選" ${pdfMode === '清單點選' ? 'selected' : ''}>清單點選（搜尋後開啟）</option></select></label></div><p class="form-hint">「任一必修完成」適合分流課程；PDF 顯示方式只影響閱讀介面，不影響學習紀錄。${modeReady ? '' : '｜請先部署新版 GAS 才能更改 PDF 顯示方式。'}</p><div class="form-actions"><button class="secondary-button" type="button" data-cancel-editor>取消</button><button class="primary-button" type="submit">儲存</button></div></form>`);
     bindEditorForm();
   }
 
@@ -2752,7 +2762,7 @@
       let action, payload;
       if (kind === 'package') {
         action = 'savePackage';
-        payload = { id: $('editId').value, title: $('editTitle').value, description: $('editDescription').value, sort: Number($('editSort').value), enabled: boolValue('editEnabled'), publishState: $('editPublishState').value, completionRule: $('editCompletionRule')?.value || '所有必修子課程完成' };
+        payload = { id: $('editId').value, title: $('editTitle').value, description: $('editDescription').value, sort: Number($('editSort').value), enabled: boolValue('editEnabled'), publishState: $('editPublishState').value, completionRule: $('editCompletionRule')?.value || '所有必修子課程完成', pdfDisplayMode: $('editPdfDisplayMode')?.value || '直接展開' };
       } else if (kind === 'reuseContents') {
         action = 'reuseContents';
         const contentIds = [...document.querySelectorAll('input[name="reuseContent"]:checked')].map(x => x.value);
