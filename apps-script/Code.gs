@@ -2,7 +2,7 @@ const APP = Object.freeze({
   SPREADSHEET_ID: '1JRLlGxbxgy3VolwulN3dSfq_ETgn0HrKiOnLhyEYT10',
   TZ: 'Asia/Taipei',
   VERSION: 'V1.0',
-  BUILD: 'VIDEO-COVERAGE-V1-20261015',
+  BUILD: 'PDF-DISPLAY-CONTROL-V1-20261029',
   SESSION_TTL_SECONDS: 21600,
   SESSION_PROP_PREFIX: 'learning-session-v11-',
   STATIC_CACHE_SECONDS: 60,
@@ -51,7 +51,7 @@ const CACHE_JSON_SAFE_BYTES_ = 90000;
 const FAST_START_VERSION_ = 'V2';
 
 function featureFlags_() {
-  return { adminBasics: true, persistentSession: true, submissions: true, forceComplete: true, lessonApplicability: true, overdueContinue: true, flatSubmissionFolders: true, cleanFast: true, lazyDataV114: true, cacheServiceV2: true, batchUploadV114: true, contentFileUploadV116: true, packageDirectSubmissionV116: true, contentMoveV1: true, courseReuseV1: true, fastPathV1: true, loginRetryV1: true, splitReadV1: true, warmSnapshotV1: true, stabilityCoreV1: true, idleLogoutV1: true, progressFastWriteV1: true, loginReliabilityV2: true, employeeWarmCacheV1: true, authWarmV1: true, loginStatusV1: true, progressSnapshotV1: true, adminTrackingFastV1: true, areaManagerTrackingV1: true, fastStartV2: true, loginFastPathV3: true, trackingSubmissionStatusV1: true, trackingDetailFastV2: true, uxStabilityV1: true, videoCoverageV1: true };
+  return { adminBasics: true, persistentSession: true, submissions: true, forceComplete: true, lessonApplicability: true, overdueContinue: true, flatSubmissionFolders: true, cleanFast: true, lazyDataV114: true, cacheServiceV2: true, batchUploadV114: true, contentFileUploadV116: true, packageDirectSubmissionV116: true, contentMoveV1: true, courseReuseV1: true, fastPathV1: true, loginRetryV1: true, splitReadV1: true, warmSnapshotV1: true, stabilityCoreV1: true, idleLogoutV1: true, progressFastWriteV1: true, loginReliabilityV2: true, employeeWarmCacheV1: true, authWarmV1: true, loginStatusV1: true, progressSnapshotV1: true, adminTrackingFastV1: true, areaManagerTrackingV1: true, fastStartV2: true, loginFastPathV3: true, trackingSubmissionStatusV1: true, trackingDetailFastV2: true, uxStabilityV1: true, videoCoverageV1: true, pdfDisplayModeV1: true };
 }
 
 function cacheJsonGet_(key) {
@@ -659,6 +659,7 @@ function studentHomeFromData_(employeeId, data, index) {
       id: packageId,
       title: clean_(pkg['母課程名稱']),
       description: clean_(pkg['說明']),
+      pdfDisplayMode: pdfDisplayModeFromPackage_(pkg),
       completionRule: completionRule,
       assignedAt: clean_(a['指派日期']),
       dueAt: clean_(a['截止日期']),
@@ -720,7 +721,8 @@ function studentLessonAction_(session, payload) {
   dto.applicabilityMode = normalizeApplicabilityMode_(lessonRow['適用對象模式']);
   dto.applicableIds = parseApplicableIds_(lessonRow['適用帳號']);
   dto.detailLoaded = true;
-  return { packageId: clean_(lessonRow['母課程ID']), lesson: dto };
+  const packageRow = rows_(APP.SHEETS.PACKAGES).find(row => clean_(row['母課程ID']) === clean_(lessonRow['母課程ID']));
+  return { packageId: clean_(lessonRow['母課程ID']), lesson: dto, pdfDisplayMode: pdfDisplayModeFromPackage_(packageRow) };
 }
 
 function submissionRowsSnapshot_() {
@@ -855,6 +857,7 @@ function adminTrackingDetailFastPackage_(employeeId, packageId) {
     id: packageId,
     title: clean_(packageRow['母課程名稱']),
     description: clean_(packageRow['說明']),
+    pdfDisplayMode: pdfDisplayModeFromPackage_(packageRow),
     completionRule: completionRule,
     assignedAt: clean_(assignment['指派日期']),
     dueAt: clean_(assignment['截止日期']),
@@ -932,6 +935,7 @@ function studentPackagesFromData_(employeeId, data) {
       id: packageId,
       title: clean_(pkg['母課程名稱']),
       description: clean_(pkg['說明']),
+      pdfDisplayMode: pdfDisplayModeFromPackage_(pkg),
       completionRule: completionRule,
       assignedAt: clean_(a['指派日期']),
       dueAt: clean_(a['截止日期']),
@@ -1043,6 +1047,12 @@ function lessonApplicableToEmployee_(employeeId, lessonRow, siblingRows) {
   return specified.indexOf(clean_(employeeId)) < 0;
 }
 
+function normalizePdfDisplayMode_(value) {
+  return clean_(value) === '清單點選' ? '清單點選' : '直接展開';
+}
+function pdfDisplayModeFromPackage_(row) {
+  return normalizePdfDisplayMode_(row && row['PDF顯示方式']);
+}
 function normalizeCompletionRule_(value) {
   const rule = clean_(value);
   return rule === '任一必修子課程完成' ? rule : '所有必修子課程完成';
@@ -1126,7 +1136,7 @@ function adminCatalogData_(data) {
     });
     return {
       id: packageId, title: clean_(p['母課程名稱']), description: clean_(p['說明']), enabled: clean_(p['啟用']) !== '否',
-      publishState: clean_(p['發佈狀態']) || '草稿', sort: number_(p['排序']), completionRule: normalizeCompletionRule_(p['完成規則']), lessons: lessons
+      publishState: clean_(p['發佈狀態']) || '草稿', sort: number_(p['排序']), completionRule: normalizeCompletionRule_(p['完成規則']), pdfDisplayMode: pdfDisplayModeFromPackage_(p), lessons: lessons
     };
   }).sort((a,b) => a.sort - b.sort);
   const assignments = assignmentRows.map(a => ({
@@ -1187,7 +1197,8 @@ function savePackage_(session, payload) {
   const existing = rows_(APP.SHEETS.PACKAGES).find(r => clean_(r['母課程ID']) === id);
   const publishState = clean_(payload.publishState) || (existing ? (clean_(existing['發佈狀態']) || '已發布') : '草稿');
   const completionRule = normalizeCompletionRule_(payload.completionRule || (existing && existing['完成規則']));
-  upsertByKey_(APP.SHEETS.PACKAGES, '母課程ID', id, {'母課程ID':id,'母課程名稱':title,'說明':clean_(payload.description),'啟用':payload.enabled===false?'否':'是','排序':Math.max(1,Math.round(number_(payload.sort)||1)),'完成規則':completionRule,'發佈狀態':publishState});
+  const pdfDisplayMode = normalizePdfDisplayMode_(payload.pdfDisplayMode === undefined ? existing && existing['PDF顯示方式'] : payload.pdfDisplayMode);
+  upsertByKey_(APP.SHEETS.PACKAGES, '母課程ID', id, {'母課程ID':id,'母課程名稱':title,'說明':clean_(payload.description),'啟用':payload.enabled===false?'否':'是','排序':Math.max(1,Math.round(number_(payload.sort)||1)),'完成規則':completionRule,'發佈狀態':publishState,'PDF顯示方式':pdfDisplayMode});
   return adminPackageResult_(session, id, existing ? '課程已更新。' : '課程已建立。');
 }
 
@@ -1413,7 +1424,8 @@ function copyPackage_(session, payload) {
     '啟用': '是',
     '排序': nextSort,
     '完成規則': normalizeCompletionRule_(sourcePackage['完成規則']),
-    '發佈狀態': '草稿'
+    '發佈狀態': '草稿',
+    'PDF顯示方式': pdfDisplayModeFromPackage_(sourcePackage)
   });
 
   const sourceLessons = rows_(APP.SHEETS.LESSONS).filter(r => clean_(r['母課程ID']) === sourcePackageId).sort((a,b) => number_(a['排序']) - number_(b['排序']));
