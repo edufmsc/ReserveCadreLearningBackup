@@ -2,7 +2,7 @@ const APP = Object.freeze({
   SPREADSHEET_ID: '1JRLlGxbxgy3VolwulN3dSfq_ETgn0HrKiOnLhyEYT10',
   TZ: 'Asia/Taipei',
   VERSION: 'V1.0',
-  BUILD: 'PDF-DISPLAY-CONTROL-V1-20261029',
+  BUILD: 'PDF-OJT-MATERIAL-V2-20261030',
   SESSION_TTL_SECONDS: 21600,
   SESSION_PROP_PREFIX: 'learning-session-v11-',
   STATIC_CACHE_SECONDS: 60,
@@ -51,7 +51,7 @@ const CACHE_JSON_SAFE_BYTES_ = 90000;
 const FAST_START_VERSION_ = 'V2';
 
 function featureFlags_() {
-  return { adminBasics: true, persistentSession: true, submissions: true, forceComplete: true, lessonApplicability: true, overdueContinue: true, flatSubmissionFolders: true, cleanFast: true, lazyDataV114: true, cacheServiceV2: true, batchUploadV114: true, contentFileUploadV116: true, packageDirectSubmissionV116: true, contentMoveV1: true, courseReuseV1: true, fastPathV1: true, loginRetryV1: true, splitReadV1: true, warmSnapshotV1: true, stabilityCoreV1: true, idleLogoutV1: true, progressFastWriteV1: true, loginReliabilityV2: true, employeeWarmCacheV1: true, authWarmV1: true, loginStatusV1: true, progressSnapshotV1: true, adminTrackingFastV1: true, areaManagerTrackingV1: true, fastStartV2: true, loginFastPathV3: true, trackingSubmissionStatusV1: true, trackingDetailFastV2: true, uxStabilityV1: true, videoCoverageV1: true, pdfDisplayModeV1: true };
+  return { adminBasics: true, persistentSession: true, submissions: true, forceComplete: true, lessonApplicability: true, overdueContinue: true, flatSubmissionFolders: true, cleanFast: true, lazyDataV114: true, cacheServiceV2: true, batchUploadV114: true, contentFileUploadV116: true, packageDirectSubmissionV116: true, contentMoveV1: true, courseReuseV1: true, fastPathV1: true, loginRetryV1: true, splitReadV1: true, warmSnapshotV1: true, stabilityCoreV1: true, idleLogoutV1: true, progressFastWriteV1: true, loginReliabilityV2: true, employeeWarmCacheV1: true, authWarmV1: true, loginStatusV1: true, progressSnapshotV1: true, adminTrackingFastV1: true, areaManagerTrackingV1: true, fastStartV2: true, loginFastPathV3: true, trackingSubmissionStatusV1: true, trackingDetailFastV2: true, uxStabilityV1: true, videoCoverageV1: true, pdfDisplayModeV1: true, perMaterialSubmissionV1: true };
 }
 
 function cacheJsonGet_(key) {
@@ -554,6 +554,7 @@ function lessonSummaryDto_(lessonRow, contentRows, progressRows) {
     updatedAt: clean_(p['更新時間']),
     videoPassPercent: nullableNumber_(lessonRow['影片最低完成率']),
     submissionMode: clean_(lessonRow['作業回傳模式']) || '不需要',
+    submissionUnit: submissionUnitForLesson_(lessonRow),
     contentTypes: types,
     contentCount: ownContents.length,
     detailLoaded: false
@@ -630,6 +631,7 @@ function lessonSummaryDtoIndexed_(lessonRow, index, progressByLesson) {
     updatedAt: clean_(p['更新時間']),
     videoPassPercent: nullableNumber_(lessonRow['影片最低完成率']),
     submissionMode: clean_(lessonRow['作業回傳模式']) || '不需要',
+    submissionUnit: submissionUnitForLesson_(lessonRow),
     contentTypes: types,
     contentCount: ownContents.length,
     detailLoaded: false
@@ -717,6 +719,7 @@ function studentLessonAction_(session, payload) {
   const progressRows = progressRowsForEmployee_(session.employeeId).filter(r => clean_(r['子課程ID']) === lessonId);
   const dto = lessonDto_(lessonRow, contentRows, progressRows);
   dto.submissionMode = clean_(lessonRow['作業回傳模式']) || '不需要';
+  dto.submissionUnit = submissionUnitForLesson_(lessonRow);
   dto.submissionNote = clean_(lessonRow['作業說明']);
   dto.applicabilityMode = normalizeApplicabilityMode_(lessonRow['適用對象模式']);
   dto.applicableIds = parseApplicableIds_(lessonRow['適用帳號']);
@@ -846,6 +849,8 @@ function adminTrackingDetailFastPackage_(employeeId, packageId) {
         completedAt: clean_(progress['完成時間']),
         updatedAt: clean_(progress['更新時間']),
         submissionMode: clean_(r['作業回傳模式']) || '不需要',
+        submissionUnit: submissionUnitForLesson_(r),
+        materialIds: activeSubmissionMaterials_(lessonId).map(c => clean_(c['內容ID'])),
         detailLoaded: false
       };
     });
@@ -923,6 +928,7 @@ function studentPackagesFromData_(employeeId, data) {
         const progress = progressByLesson.get(lessonId);
         const dto = lessonDto_(l, index.contentsByLesson.get(lessonId) || [], progress ? [progress] : []);
         dto.submissionMode = clean_(l['作業回傳模式']) || '不需要';
+        dto.submissionUnit = submissionUnitForLesson_(l);
         dto.submissionNote = clean_(l['作業說明']);
         dto.applicabilityMode = normalizeApplicabilityMode_(l['適用對象模式']);
         dto.applicableIds = parseApplicableIds_(l['適用帳號']);
@@ -977,6 +983,7 @@ function lessonDto_(lessonRow, contentRows, progressRows) {
     videoTotalSeconds: number_(p['影片總秒數']),
     applicabilityMode: normalizeApplicabilityMode_(lessonRow['適用對象模式']),
     applicableIds: parseApplicableIds_(lessonRow['適用帳號']),
+    submissionUnit: submissionUnitForLesson_(lessonRow),
     contentProgress: progress, contents: contents
   };
   dto.criteria = lessonCriteria_(dto);
@@ -1045,6 +1052,30 @@ function lessonApplicableToEmployee_(employeeId, lessonRow, siblingRows) {
     parseApplicableIds_(row['適用帳號']).forEach(id => { if (specified.indexOf(id) < 0) specified.push(id); });
   });
   return specified.indexOf(clean_(employeeId)) < 0;
+}
+
+function normalizeSubmissionUnit_(value) {
+  return clean_(value) === '逐教材回傳' ? '逐教材回傳' : '整課回傳';
+}
+function submissionUnitForLesson_(row) {
+  return normalizeSubmissionUnit_(row && row['作業回傳單位']);
+}
+function activeSubmissionMaterials_(lessonId) {
+  return rows_(APP.SHEETS.CONTENT)
+    .filter(r => clean_(r['子課程ID']) === clean_(lessonId) && clean_(r['啟用']) === '是')
+    .sort((a,b) => number_(a['排序']) - number_(b['排序']));
+}
+function validateSubmissionContentId_(lessonRow, value, allowEmpty) {
+  const id = clean_(value);
+  if (submissionUnitForLesson_(lessonRow) !== '逐教材回傳') {
+    if (id) throw apiError_('SUBMISSION_UNIT_MISMATCH', '本子課程採整課回傳，不能指定教材。');
+    return '';
+  }
+  if (!id && allowEmpty) return '';
+  if (!id) throw apiError_('SUBMISSION_CONTENT_REQUIRED', '請選擇要回傳的教材。');
+  if (!activeSubmissionMaterials_(lessonRow['子課程ID']).some(r => clean_(r['內容ID']) === id))
+    throw apiError_('SUBMISSION_CONTENT_NOT_FOUND', '這份教材不存在、已停用或不屬於目前子課程。');
+  return id;
 }
 
 function normalizePdfDisplayMode_(value) {
@@ -1125,6 +1156,7 @@ function adminCatalogData_(data) {
         videoPassPercent: nullableNumber_(l['影片最低完成率']),
         submissionMode: clean_(l['作業回傳模式']) || '不需要',
         submissionNote: clean_(l['作業說明']),
+        submissionUnit: submissionUnitForLesson_(l),
         applicabilityMode: normalizeApplicabilityMode_(l['適用對象模式']),
         applicableIds: parseApplicableIds_(l['適用帳號']),
         enabled: clean_(l['啟用']) !== '否',
@@ -1212,9 +1244,10 @@ function saveLesson_(session, payload) {
   const existingLesson=rows_(APP.SHEETS.LESSONS).find(r=>clean_(r['子課程ID'])===id)||{};
   const submissionMode=clean_(payload.submissionMode)||clean_(existingLesson['作業回傳模式'])||'不需要';
   const submissionNote=payload.submissionNote===undefined?clean_(existingLesson['作業說明']):clean_(payload.submissionNote);
+  const submissionUnit=normalizeSubmissionUnit_(payload.submissionUnit===undefined?existingLesson['作業回傳單位']:payload.submissionUnit);
   const applicabilityMode=normalizeApplicabilityMode_(payload.applicabilityMode===undefined?existingLesson['適用對象模式']:payload.applicabilityMode);
   const applicableIds=applicabilityMode==='指定帳號'?parseApplicableIds_(payload.applicableIds===undefined?existingLesson['適用帳號']:payload.applicableIds):[];
-  upsertByKey_(APP.SHEETS.LESSONS,'子課程ID',id,{'子課程ID':id,'母課程ID':packageId,'子課程名稱':title,'必修':payload.required===false?'否':'是','排序':Math.max(1,Math.round(number_(payload.sort)||1)),'通過規則':video===null?'完成確認':'影片達 '+video+'%','影片最低完成率':video===null?'':video,'啟用':payload.enabled===false?'否':'是','作業回傳模式':submissionMode,'作業說明':submissionNote,'適用對象模式':applicabilityMode,'適用帳號':serializeApplicableIds_(applicableIds)});
+  upsertByKey_(APP.SHEETS.LESSONS,'子課程ID',id,{'子課程ID':id,'母課程ID':packageId,'子課程名稱':title,'必修':payload.required===false?'否':'是','排序':Math.max(1,Math.round(number_(payload.sort)||1)),'通過規則':video===null?'完成確認':'影片達 '+video+'%','影片最低完成率':video===null?'':video,'啟用':payload.enabled===false?'否':'是','作業回傳模式':submissionMode,'作業說明':submissionNote,'作業回傳單位':submissionUnit,'適用對象模式':applicabilityMode,'適用帳號':serializeApplicableIds_(applicableIds)});
   return adminPackageResult_(session, packageId, clean_(payload.id) ? '子課程已更新。' : '子課程已建立。', { createdLessonId: clean_(payload.id) ? '' : id });
 }
 
@@ -1380,6 +1413,7 @@ function cloneLessonIntoPackage_(sourceLesson, targetPackageId, options, content
     '啟用': clean_(sourceLesson['啟用']) === '否' ? '否' : '是',
     '作業回傳模式': clean_(sourceLesson['作業回傳模式']) || '不需要',
     '作業說明': clean_(sourceLesson['作業說明']),
+    '作業回傳單位': submissionUnitForLesson_(sourceLesson),
     '適用對象模式': normalizeApplicabilityMode_(sourceLesson['適用對象模式']),
     '適用帳號': serializeApplicableIds_(sourceLesson['適用帳號'])
   });
@@ -1441,7 +1475,7 @@ function copyPackage_(session, payload) {
       upsertByKey_(APP.SHEETS.LESSONS, '子課程ID', newDirectId, {
         '子課程ID': newDirectId, '母課程ID': createdPackageId, '子課程名稱': '__PACKAGE_DIRECT__', '必修': '是', '排序': 0,
         '通過規則': clean_(sourceLesson['通過規則']) || '完成確認', '影片最低完成率': sourceLesson['影片最低完成率'] || '', '啟用': '是',
-        '作業回傳模式': clean_(sourceLesson['作業回傳模式']) || '不需要', '作業說明': clean_(sourceLesson['作業說明']), '適用對象模式': '全部適用', '適用帳號': ''
+        '作業回傳模式': clean_(sourceLesson['作業回傳模式']) || '不需要', '作業說明': clean_(sourceLesson['作業說明']), '作業回傳單位': submissionUnitForLesson_(sourceLesson), '適用對象模式': '全部適用', '適用帳號': ''
       });
       sourceContents.filter(r => clean_(r['子課程ID']) === clean_(sourceLesson['子課程ID'])).sort((a,b) => number_(a['排序']) - number_(b['排序'])).forEach((row,index) => cloneContentRow_(row, newDirectId, number_(row['排序']) || index + 1));
       createdLessonIds.push(newDirectId);
