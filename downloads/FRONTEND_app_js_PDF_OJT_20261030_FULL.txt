@@ -1259,7 +1259,7 @@
     }
     if (type === 'PDF') {
       if (!url) return `<article class="content-block"><h3>${title}</h3><div class="content-placeholder">PDF 尚未設定</div></article>`;
-      return `<article class="content-block pdf-content" data-media-block data-content-id="${escapeHtml(item.id)}" data-media-type="PDF" data-pdf-url="${escapeHtml(url)}"><h3>${title}</h3><div class="pdf-embed-shell" data-pdf-host="${escapeHtml(item.id)}"><div class="pdf-loading">正在載入 PDF…</div></div><div class="pdf-status-line"><span>閱讀：<strong data-pdf-time="${escapeHtml(item.id)}">${formatSeconds(progress.seconds || 0)}</strong></span></div></article>`;
+      return `<article class="content-block pdf-content" data-media-block data-content-id="${escapeHtml(item.id)}" data-media-type="PDF" data-pdf-url="${escapeHtml(url)}"><h3>${title}</h3><div class="pdf-zoom-toolbar" data-pdf-toolbar><button type="button" class="mini-button" data-pdf-zoom-out disabled aria-label="縮小 PDF">－</button><strong data-pdf-zoom-value>載入中</strong><button type="button" class="mini-button" data-pdf-zoom-in disabled aria-label="放大 PDF">＋</button><button type="button" class="mini-button" data-pdf-zoom-fit disabled>符合頁寬</button><small>手機放大後可左右滑動</small></div><div class="pdf-embed-shell" data-pdf-host="${escapeHtml(item.id)}"><div class="pdf-loading">正在載入 PDF…</div></div><div class="pdf-status-line"><span>閱讀：<strong data-pdf-time="${escapeHtml(item.id)}">${formatSeconds(progress.seconds || 0)}</strong></span></div></article>`;
     }
     return '';
   }
@@ -1350,98 +1350,162 @@
     if (!block || block._pdfDisposed || block.dataset.loaded === '1') return;
     block.dataset.loaded = '1';
     const contentId = block.dataset.contentId;
-    const pdfUrl = clean(block.dataset.pdfUrl);
     const host = block.querySelector('[data-pdf-host]');
     if (!host) return;
     host.oncontextmenu = event => event.preventDefault();
+    const toolbar = block.querySelector('[data-pdf-toolbar]');
+    const plus = toolbar?.querySelector('[data-pdf-zoom-in]');
+    const minus = toolbar?.querySelector('[data-pdf-zoom-out]');
+    const fit = toolbar?.querySelector('[data-pdf-zoom-fit]');
+    const label = toolbar?.querySelector('[data-pdf-zoom-value]');
+    const levels = [1,1.25,1.5,1.75,2,2.5,3];
+    const mobile = window.innerWidth <= 760;
+    let zoom = mobile ? 1.5 : 1;
+    let generation = 1, stack = null, observer = null, baseWidth = 1, baseHeight = 1, fitScale = 1, available = 1;
+    const rendered = new Set();
+    const controls = () => {
+      if (label) label.textContent = Math.round(zoom * 100) + '%';
+      if (minus) minus.disabled = zoom <= 1;
+      if (plus) plus.disabled = zoom >= 3;
+      if (fit) fit.disabled = zoom === 1;
+    };
+    const placeholderCanvas = (w,h) => {
+      const canvas = document.createElement('canvas');
+      canvas.className = 'pdf-page-canvas';
+      canvas.style.width = Math.ceil(w) + 'px';
+      canvas.style.height = Math.ceil(h) + 'px';
+      canvas.addEventListener('contextmenu', e => e.preventDefault());
+      return canvas;
+    };
+    const clearPage = (wrap,w,h) => {
+      if (wrap._task) { try { wrap._task.cancel(); } catch {} wrap._task = null; }
+      const old = wrap.querySelector('canvas');
+      const fresh = placeholderCanvas(w,h);
+      if (old) { old.replaceWith(fresh); old.width=0; old.height=0; }
+      else wrap.appendChild(fresh);
+      wrap.dataset.rendered = '';
+      wrap.dataset.rendering = '';
+      wrap.style.minHeight = Math.ceil(h+30) + 'px';
+    };
+    const trimCanvasMemory = current => {
+      const limit = mobile ? 5 : 9;
+      if (rendered.size <= limit) return;
+      const center = host.scrollTop + host.clientHeight/2;
+      for (const wrap of [...rendered].filter(w => w!==current).sort((a,b)=>Math.abs(b.offsetTop-center)-Math.abs(a.offsetTop-center))) {
+        if (rendered.size <= limit) break;
+        if (Math.abs(wrap.offsetTop-center) < host.clientHeight*1.5 || wrap._task) continue;
+        const old=wrap.querySelector('canvas');
+        if (!old) continue;
+        const fresh=placeholderCanvas(parseFloat(old.style.width)||baseWidth,parseFloat(old.style.height)||baseHeight);
+        old.replaceWith(fresh);old.width=0;old.height=0;
+        wrap.dataset.rendered='';rendered.delete(wrap);
+      }
+    };
+    const renderPage = async wrap => {
+      if (!wrap?.isConnected || block._pdfDisposed) return;
+      const rev=generation;
+      if (wrap.dataset.rendered===String(rev) || wrap.dataset.rendering===String(rev)) return;
+      wrap.dataset.rendering=String(rev);
+      let task=null;
+      try {
+        const page=await block._pdfDocument.getPage(Number(wrap.dataset.pageNo));
+        if (block._pdfDisposed || rev!==generation || !wrap.isConnected) return;
+        const viewport=page.getViewport({scale:fitScale*zoom});
+        const budget=mobile?12000000:18000000;
+        const ratio=Math.max(1,Math.min(window.devicePixelRatio||1,3,Math.sqrt(budget/Math.max(1,viewport.width*viewport.height))));
+        const renderViewport=page.getViewport({scale:fitScale*zoom*ratio});
+        const canvas=wrap.querySelector('canvas');
+        if (!canvas || rev!==generation) return;
+        canvas.width=Math.max(1,Math.floor(renderViewport.width));
+        canvas.height=Math.max(1,Math.floor(renderViewport.height));
+        canvas.style.width=Math.ceil(viewport.width)+'px';
+        canvas.style.height=Math.ceil(viewport.height)+'px';
+        task=page.render({canvasContext:canvas.getContext('2d',{alpha:false}),viewport:renderViewport});
+        wrap._task=task;
+        await task.promise;
+        if (rev!==generation || block._pdfDisposed) return;
+        wrap.dataset.rendered=String(rev);wrap.style.minHeight='';
+        rendered.delete(wrap);rendered.add(wrap);trimCanvasMemory(wrap);
+      } catch (error) {
+        if (error?.name!=='RenderingCancelledException') console.warn('PDF rendering',error);
+      } finally {
+        if (wrap._task===task) wrap._task=null;
+        if (wrap.dataset.rendering===String(rev)) wrap.dataset.rendering='';
+      }
+    };
+    const renderNearby = () => {
+      if (!stack) return;
+      const hostRect=host.getBoundingClientRect();
+      stack.querySelectorAll('.pdf-page-wrap').forEach(wrap=>{
+        const rect=wrap.getBoundingClientRect();
+        if (rect.bottom>hostRect.top-500 && rect.top<hostRect.bottom+500) renderPage(wrap).catch(()=>{});
+      });
+    };
+    const setZoom = requested => {
+      if (!stack || block._pdfDisposed) return;
+      const next=levels.reduce((best,x)=>Math.abs(x-requested)<Math.abs(best-requested)?x:best,levels[0]);
+      if (next===zoom) return;
+      const centerY=(host.scrollTop+host.clientHeight/2)/Math.max(1,host.scrollHeight);
+      const centerX=(host.scrollLeft+host.clientWidth/2)/Math.max(1,host.scrollWidth);
+      zoom=next;generation++;rendered.clear();
+      const w=Math.ceil(baseWidth*fitScale*zoom),h=Math.ceil(baseHeight*fitScale*zoom);
+      stack.style.width=Math.max(available,w)+'px';
+      stack.querySelectorAll('.pdf-page-wrap').forEach(wrap=>clearPage(wrap,w,h));
+      controls();
+      host.scrollLeft=Math.max(0,centerX*host.scrollWidth-host.clientWidth/2);
+      host.scrollTop=Math.max(0,centerY*host.scrollHeight-host.clientHeight/2);
+      renderNearby();
+    };
     try {
-      // V1.1.4: 所有 PDF 都走自有 PDF.js 閱讀器，不再嵌入 Google Drive 預覽器。
-      // 這樣可移除 Drive 自帶的「彈出式視窗」控制項，且手機/電腦閱讀介面一致。
-      host.classList.remove('pdf-drive-shell');
-      let data = state.pdfCache.get(contentId);
-      if (data) {
-        state.pdfCache.delete(contentId);
-        state.pdfCache.set(contentId, data);
-      } else {
-        data = await api('getPdfContent', { contentId }, state.token, { retry: false, timeout: 30000 });
-        state.pdfCache.set(contentId, data);
-        while (state.pdfCache.size > 3) state.pdfCache.delete(state.pdfCache.keys().next().value);
+      let data=state.pdfCache.get(contentId);
+      if (data) {state.pdfCache.delete(contentId);state.pdfCache.set(contentId,data);}
+      else {
+        data=await api('getPdfContent',{contentId},state.token,{retry:false,timeout:30000});
+        state.pdfCache.set(contentId,data);
+        while(state.pdfCache.size>3)state.pdfCache.delete(state.pdfCache.keys().next().value);
       }
       if (block._pdfDisposed || !block.isConnected) return;
-      const pdfjs = await loadPdfJs();
+      const pdfjs=await loadPdfJs();
       if (block._pdfDisposed || !block.isConnected) return;
-      const pdf = await pdfjs.getDocument({ data: base64Bytes(data.base64) }).promise;
-      if (block._pdfDisposed || !block.isConnected) {
-        try { await pdf.destroy(); } catch {}
-        return;
+      const pdf=await pdfjs.getDocument({data:base64Bytes(data.base64)}).promise;
+      if (block._pdfDisposed || !block.isConnected) {try{await pdf.destroy();}catch{}return;}
+      block._pdfDocument=pdf;
+      const firstPage=await pdf.getPage(1);
+      if (block._pdfDisposed || !block.isConnected) return;
+      const first=firstPage.getViewport({scale:1});
+      baseWidth=first.width;baseHeight=first.height;
+      available=Math.max(220,host.clientWidth-(mobile?12:28));
+      fitScale=Math.min(2,available/baseWidth);
+      host.innerHTML='<div class="pdf-canvas-stack"></div>';
+      stack=host.firstElementChild;
+      stack.style.width=Math.max(available,Math.ceil(baseWidth*fitScale*zoom))+'px';
+      observer=new IntersectionObserver(entries=>entries.forEach(entry=>{
+        if (entry.isIntersecting)renderPage(entry.target).catch(()=>{});
+      }),{root:host,rootMargin:mobile?'500px 0px':'800px 0px',threshold:0.01});
+      block._pdfPageObserver=observer;state.pdfPageObservers.add(observer);
+      for(let pageNo=1;pageNo<=pdf.numPages;pageNo++){
+        const wrap=document.createElement('div');wrap.className='pdf-page-wrap';wrap.dataset.pageNo=String(pageNo);
+        const w=Math.ceil(baseWidth*fitScale*zoom),h=Math.ceil(baseHeight*fitScale*zoom);
+        wrap.style.minHeight=Math.ceil(h+30)+'px';
+        const pageLabel=document.createElement('div');pageLabel.className='pdf-page-label';pageLabel.textContent='第 '+pageNo+' / '+pdf.numPages+' 頁';
+        wrap.append(pageLabel,placeholderCanvas(w,h));stack.appendChild(wrap);observer.observe(wrap);
       }
-      block._pdfDocument = pdf;
-      host.innerHTML = '<div class="pdf-canvas-stack"></div>';
-      const stack = host.firstElementChild;
-      const available = Math.max(280, host.clientWidth - 28);
-      // Render at native device density for crisp CJK text, with a pixel budget for mobile memory.
-      const deviceRatio = Math.max(1, window.devicePixelRatio || 1);
-      const requestedRatio = Math.min(deviceRatio, 3);
-      const MAX_PAGE_PIXELS = window.innerWidth <= 760 ? 10000000 : 16000000;
-      const renderPage = async wrap => {
-        if (wrap.dataset.rendered === '1' || wrap.dataset.rendering === '1') return;
-        wrap.dataset.rendering = '1';
-        try {
-          const pageNo = Number(wrap.dataset.pageNo);
-          const page = await pdf.getPage(pageNo);
-          const baseViewport = page.getViewport({ scale: 1 });
-          const cssScale = Math.min(2, available / baseViewport.width);
-          const cssViewport = page.getViewport({ scale: cssScale });
-          const pageRatio = Math.min(requestedRatio, Math.sqrt(MAX_PAGE_PIXELS / Math.max(1, cssViewport.width * cssViewport.height)));
-          const renderViewport = page.getViewport({ scale: cssScale * Math.max(1, pageRatio) });
-          const canvas = wrap.querySelector('canvas');
-          canvas.width = Math.max(1, Math.floor(renderViewport.width));
-          canvas.height = Math.max(1, Math.floor(renderViewport.height));
-          canvas.style.width = `${Math.max(1, Math.floor(baseViewport.width * cssScale))}px`;
-          canvas.style.height = `${Math.max(1, Math.floor(baseViewport.height * cssScale))}px`;
-          await page.render({ canvasContext: canvas.getContext('2d', { alpha: false }), viewport: renderViewport }).promise;
-          wrap.style.minHeight = '';
-          wrap.dataset.rendered = '1';
-        } finally { wrap.dataset.rendering = '0'; }
-      };
-      const observer = new IntersectionObserver(entries => entries.forEach(entry => {
-        if (entry.isIntersecting) renderPage(entry.target).catch(() => {});
-      }), { root: host, rootMargin: '900px 0px', threshold: 0.01 });
-      state.pdfPageObservers.add(observer);
-      block._pdfPageObserver = observer;
-
-      const firstPage = await pdf.getPage(1);
+      if(plus)plus.onclick=()=>setZoom(levels[Math.min(levels.length-1,levels.indexOf(zoom)+1)]);
+      if(minus)minus.onclick=()=>setZoom(levels[Math.max(0,levels.indexOf(zoom)-1)]);
+      if(fit)fit.onclick=()=>setZoom(1);
+      controls();
+      let pinch=null;
+      const distance=touches=>Math.hypot(touches[0].clientX-touches[1].clientX,touches[0].clientY-touches[1].clientY);
+      host.addEventListener('touchstart',e=>{if(e.touches.length===2)pinch={initial:distance(e.touches),last:distance(e.touches),zoom};},{passive:true});
+      host.addEventListener('touchmove',e=>{if(pinch&&e.touches.length===2){pinch.last=distance(e.touches);if(e.cancelable)e.preventDefault();}},{passive:false});
+      host.addEventListener('touchend',e=>{if(pinch&&e.touches.length<2){setZoom(pinch.zoom*(pinch.initial?pinch.last/pinch.initial:1));pinch=null;}},{passive:true});
+      host.addEventListener('touchcancel',()=>{pinch=null;},{passive:true});
+      renderNearby();
+    } catch(error) {
       if (block._pdfDisposed || !block.isConnected) return;
-      const firstViewport = firstPage.getViewport({ scale: 1 });
-      const firstCssScale = Math.min(2, available / firstViewport.width);
-      const estimatedWidth = Math.max(1, Math.floor(firstViewport.width * firstCssScale));
-      const estimatedHeight = Math.max(1, Math.floor(firstViewport.height * firstCssScale));
-
-      for (let pageNo = 1; pageNo <= pdf.numPages; pageNo++) {
-        const wrap = document.createElement('div');
-        wrap.className = 'pdf-page-wrap';
-        wrap.dataset.pageNo = String(pageNo);
-        wrap.style.minHeight = `${estimatedHeight + 30}px`;
-        const label = document.createElement('div');
-        label.className = 'pdf-page-label';
-        label.textContent = `第 ${pageNo} / ${pdf.numPages} 頁`;
-        const canvas = document.createElement('canvas');
-        canvas.className = 'pdf-page-canvas';
-        canvas.style.width = `${estimatedWidth}px`;
-        canvas.style.height = `${estimatedHeight}px`;
-        canvas.addEventListener('contextmenu', event => event.preventDefault());
-        wrap.append(label, canvas);
-        stack.appendChild(wrap);
-        observer.observe(wrap);
-      }
-      const first = stack.querySelector('.pdf-page-wrap');
-      if (first) renderPage(first).catch(() => {});
-    } catch (error) {
-      if (block._pdfDisposed || !block.isConnected) return;
-      block.dataset.loaded = '0';
-      host.innerHTML = `<div class="content-placeholder pdf-error"><span>PDF 載入失敗：${escapeHtml(error.message || '請確認檔案權限')}</span><button type="button" class="mini-button" data-retry-pdf>重新載入</button></div>`;
-      const retry = host.querySelector('[data-retry-pdf]');
-      if (retry) retry.onclick = () => mountPdf(block);
+      block.dataset.loaded='0';
+      host.innerHTML='<div class="content-placeholder pdf-error"><span>PDF 載入失敗：'+escapeHtml(error.message||'請確認檔案權限')+'</span><button type="button" class="mini-button" data-retry-pdf>重新載入</button></div>';
+      const retry=host.querySelector('[data-retry-pdf]');if(retry)retry.onclick=()=>mountPdf(block);
     }
   }
 

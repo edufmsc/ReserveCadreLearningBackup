@@ -603,3 +603,14 @@
  .v1-material-submission .v1-material-actions button{width:auto;min-height:36px;padding:7px 9px}
  .content-block--file .download-card .primary-button{min-height:38px}
 }
+
+/* Phone-friendly crisp PDF: actual zoom and horizontal pan, not scaled-down canvas */
+.pdf-zoom-toolbar{display:flex;align-items:center;gap:7px;flex-wrap:wrap;padding:8px 10px;margin:7px 0;border:1px solid var(--line);border-radius:10px;background:var(--soft)}
+.pdf-zoom-toolbar .mini-button{min-height:40px;min-width:40px}
+.pdf-zoom-toolbar strong{min-width:52px;text-align:center;font-size:.8rem;font-variant-numeric:tabular-nums}
+.pdf-zoom-toolbar small{color:var(--muted);font-size:.73rem}
+.pdf-embed-shell{max-width:100%;overflow-x:auto!important;overflow-y:auto!important;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-x pan-y}
+.pdf-canvas-stack{width:max-content;min-width:100%;justify-items:center}
+.pdf-page-wrap{width:100%;min-width:0}
+.pdf-page-canvas{max-width:none!important;object-fit:fill}
+@media(max-width:760px){.pdf-zoom-toolbar{padding:7px;gap:5px}.pdf-zoom-toolbar .mini-button{min-height:44px}.pdf-zoom-toolbar small{flex-basis:100%}.pdf-embed-shell{padding:6px!important;scrollbar-gutter:auto}}
