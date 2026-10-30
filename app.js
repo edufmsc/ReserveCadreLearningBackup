@@ -1379,7 +1379,10 @@
       host.innerHTML = '<div class="pdf-canvas-stack"></div>';
       const stack = host.firstElementChild;
       const available = Math.max(280, host.clientWidth - 28);
-      const pixelRatio = Math.min(window.innerWidth <= 760 ? 1.15 : 1.4, Math.max(1, window.devicePixelRatio || 1));
+      // Render at native device density for crisp CJK text, with a pixel budget for mobile memory.
+      const deviceRatio = Math.max(1, window.devicePixelRatio || 1);
+      const requestedRatio = Math.min(deviceRatio, 3);
+      const MAX_PAGE_PIXELS = window.innerWidth <= 760 ? 10000000 : 16000000;
       const renderPage = async wrap => {
         if (wrap.dataset.rendered === '1' || wrap.dataset.rendering === '1') return;
         wrap.dataset.rendering = '1';
@@ -1388,7 +1391,9 @@
           const page = await pdf.getPage(pageNo);
           const baseViewport = page.getViewport({ scale: 1 });
           const cssScale = Math.min(2, available / baseViewport.width);
-          const renderViewport = page.getViewport({ scale: cssScale * pixelRatio });
+          const cssViewport = page.getViewport({ scale: cssScale });
+          const pageRatio = Math.min(requestedRatio, Math.sqrt(MAX_PAGE_PIXELS / Math.max(1, cssViewport.width * cssViewport.height)));
+          const renderViewport = page.getViewport({ scale: cssScale * Math.max(1, pageRatio) });
           const canvas = wrap.querySelector('canvas');
           canvas.width = Math.max(1, Math.floor(renderViewport.width));
           canvas.height = Math.max(1, Math.floor(renderViewport.height));
