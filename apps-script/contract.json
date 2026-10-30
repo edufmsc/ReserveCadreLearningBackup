@@ -1,6 +1,6 @@
 {
   "version": "V1.0",
-  "build": "PDF-DISPLAY-CONTROL-V1-20261029",
+  "build": "PDF-OJT-MATERIAL-V2-20261030",
   "actions": [
     "health",
     "authWarm",
@@ -42,7 +42,12 @@
     "adminSubmissions",
     "reviewSubmission",
     "forceCompletePackage",
-    "clearForceCompletePackage"
+    "clearForceCompletePackage",
+    "getMaterialSubmissions",
+    "uploadMaterialSubmission",
+    "submitMaterialSubmission",
+    "reviewMaterialSubmission",
+    "adminMaterialSubmissions"
   ],
   "features": {
     "adminBasics": true,
@@ -80,6 +85,7 @@
     "trackingDetailFastV2": true,
     "uxStabilityV1": true,
     "videoCoverageV1": true,
-    "pdfDisplayModeV1": true
+    "pdfDisplayModeV1": true,
+    "perMaterialSubmissionV1": true
   }
 }
