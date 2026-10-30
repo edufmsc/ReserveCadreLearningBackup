@@ -970,6 +970,7 @@
       if (!pkg) throw new Error('找不到課程');
       const position = (pkg.lessons || []).findIndex(x => x.id === detail.id);
       if (position < 0) throw new Error('找不到子課程');
+      if (clean(data.pdfDisplayMode)) pkg.pdfDisplayMode = data.pdfDisplayMode;
       pkg.lessons[position] = { ...pkg.lessons[position], ...detail, detailLoaded: true };
       return { pkg, lesson: pkg.lessons[position] };
     })().finally(() => state.studentLessonInflight.delete(key));
