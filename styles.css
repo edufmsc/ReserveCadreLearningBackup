@@ -560,3 +560,18 @@
  .pdf-library__reader-actions{width:100%}
  .pdf-library__reader-actions .mini-button{flex:1;min-height:36px}
 }
+
+/* OJT per-material submission: responsive mobile touch targets */
+.v1-material-submission{border:1px solid var(--line);border-radius:12px;background:#fff;padding:14px;margin:12px 0;display:grid;gap:10px;min-width:0}
+.v1-material-submission .v1-sub-title{align-items:start;gap:12px}
+.v1-material-submission h4{font-size:1rem;line-height:1.55;margin:0;overflow-wrap:anywhere}
+.v1-material-submission input[type=file]{display:block;width:100%;max-width:100%;font-size:16px;min-height:44px;padding:10px;border-radius:9px;border:1px solid var(--line);background:#fff}
+.v1-material-submission button{min-height:46px;max-width:100%;white-space:normal}
+.v1-material-submission .v1-uploaded-file{min-width:0;overflow-wrap:anywhere}
+@media(max-width:760px){
+ .pdf-embed-shell{padding:5px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+ .pdf-page-canvas{box-shadow:0 1px 9px rgba(0,0,0,.15)}
+ .v1-material-submission{padding:12px;gap:9px}
+ .v1-material-submission .v1-sub-title{flex-wrap:wrap}
+ .v1-material-submission button{width:100%}
+}
