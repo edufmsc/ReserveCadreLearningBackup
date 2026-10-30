@@ -246,6 +246,7 @@ function doPost(e) {
       case 'getPdfContent': return json_({ success: true, data: getPdfContent_(requireSession_(token), payload) });
       case 'getMaterialSubmissions': return json_({ success: true, data: getMaterialSubmissions_(requireSession_(token), payload) });
        case 'uploadMaterialSubmission': return json_({ success: true, data: uploadMaterialSubmission_(requireSession_(token), payload) });
+      case 'removeMaterialSubmissionFile': return json_({ success: true, data: removeMaterialSubmissionFile_(requireSession_(token), payload) });
        case 'submitMaterialSubmission': return json_({ success: true, data: submitMaterialSubmission_(requireSession_(token), payload) });
        case 'reviewMaterialSubmission': return json_({ success: true, data: reviewMaterialSubmission_(requireAdmin_(token), payload) });
        case 'adminMaterialSubmissions': return json_({ success: true, data: adminMaterialSubmissions_(requireAdmin_(token)) });
@@ -2449,7 +2450,9 @@ function reopenProgressAfterApprovalReversal_(employeeId,lessonRow){
   const lessonId=clean_(lessonRow&&lessonRow['子課程ID']);
   if(!lessonId)return false;
   const existing=findProgress_(employeeId,lessonId);
-  if(!existing||clean_(existing['狀態'])!=='complete'||clean_(existing['完成方式'])!=='作業審核通過')return false;
+  if(!existing||clean_(existing['狀態'])!=='complete')return false;
+  const method=clean_(existing['完成方式']);
+  if(method!=='作業審核通過' && !(submissionUnitForLesson_(lessonRow)==='逐教材回傳' && method==='學員完成'))return false;
   upsertProgress_(employeeId,clean_(lessonRow['母課程ID']),lessonId,{status:'in_progress',videoSeconds:number_(existing['影片秒數']),pdfSeconds:number_(existing['PDF秒數']),startedAt:clean_(existing['開始時間'])||now_(),completedAt:'',videoTotalSeconds:number_(existing['影片總秒數']),contentProgress:parseContentProgress_(existing['教材進度JSON']),completionMethod:'',completionNote:clean_(existing['完成備註'])});
   return true;
 }
@@ -2763,7 +2766,7 @@ function materialDraft_(employeeId,lesson,contentId) {
   if(last&&clean_(last['狀態'])==='已通過')throw apiError_('SUBMISSION_APPROVED','本教材已通過。');
   const version=last?number_(last['版本'])+1:1;
   const content=rows_(APP.SHEETS.CONTENT).find(c=>clean_(c['內容ID'])===contentId)||{};
-  const folder=childFolder_(submissionMonthFolder_(lesson),safeFolderName_(submissionVersionName_(employeeId,version,lesson)+'_'+clean_(content['標題'])));
+  const folder=childFolder_(submissionMonthFolder_(lesson),safeFolderName_(contentId+'_'+submissionVersionName_(employeeId,version,lesson)+'_'+clean_(content['標題'])));
   const now=now_(),id=makeId_('MS');
   upsertByKey_(MATERIAL_SUBMISSION_SHEET_,'回傳ID',id,{'回傳ID':id,'工號':employeeId,'母課程ID':clean_(lesson['母課程ID']),'子課程ID':clean_(lesson['子課程ID']),'教材ID':contentId,'版本':version,'狀態':'未送審','資料夾ID':folder.getId(),'檔案JSON':'[]','建立時間':now,'更新時間':now});
   return materialLatest_(employeeId,lesson['子課程ID'],contentId);
@@ -2788,6 +2791,22 @@ function uploadMaterialSubmission_(session,payload) {
     const now=now_();files.push({id:file.getId(),name:fileName,size:bytes.length,mimeType:clean_(payload.mimeType),uploadedAt:now});
     upsertByKey_(MATERIAL_SUBMISSION_SHEET_,'回傳ID',clean_(draft['回傳ID']),{'檔案JSON':JSON.stringify(files),'更新時間':now});
   }
+  return getMaterialSubmissions_(session,{lessonId:lesson['子課程ID']});
+}
+function removeMaterialSubmissionFile_(session,payload) {
+  if (!isLearnerSession_(session)) throw apiError_('STUDENT_ONLY','只有學員可以移除草稿附件。');
+  const lesson=assignedLesson_(session.employeeId,payload.lessonId);
+  const contentId=validateSubmissionContentId_(lesson,payload.contentId,false);
+  const row=materialLatest_(session.employeeId,lesson['子課程ID'],contentId);
+  if (!row || clean_(row['狀態'])!=='未送審')
+    throw apiError_('SUBMISSION_LOCKED','只有未送審的附件可以刪除。');
+  const files=parseSubmissionFiles_(row['檔案JSON']), fileId=clean_(payload.fileId);
+  const found=files.some(f=>clean_(f.id)===fileId);
+  if (!found) throw apiError_('FILE_NOT_FOUND','找不到該教材的附件。');
+  try { DriveApp.getFileById(fileId).setTrashed(true); }
+  catch (e) { throw apiError_('FILE_DELETE_FAILED','無法移除附件，請稍後再試。'); }
+  upsertByKey_(MATERIAL_SUBMISSION_SHEET_,'回傳ID',clean_(row['回傳ID']),
+    {'檔案JSON':JSON.stringify(files.filter(f=>clean_(f.id)!==fileId)),'更新時間':now_()});
   return getMaterialSubmissions_(session,{lessonId:lesson['子課程ID']});
 }
 function submitMaterialSubmission_(session,payload) {
