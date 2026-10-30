@@ -2779,8 +2779,7 @@ function uploadMaterialSubmission_(session,payload) {
   if(!config.allowedExtensions.includes(ext))throw apiError_('FILE_TYPE_NOT_ALLOWED','不支援此檔案格式。');
   let bytes;try{bytes=Utilities.base64Decode(clean_(payload.fileBase64));}catch(e){throw apiError_('FILE_DATA_INVALID','檔案格式不正確。');}
   if(!bytes.length||bytes.length>config.maxMb*1024*1024)throw apiError_('FILE_SIZE_INVALID','作業檔案為空或超過限制。');
-  const lock=LockService.getScriptLock();lock.waitLock(20000);
-  try {
+  {
     const draft=materialDraft_(session.employeeId,lesson,contentId);
     const files=parseSubmissionFiles_(draft['檔案JSON']);
     if(files.length>=config.maxFilesPerSubmission)throw apiError_('TOO_MANY_FILES','每份教材附件數量已達上限。');
@@ -2788,7 +2787,7 @@ function uploadMaterialSubmission_(session,payload) {
     const file=folder.createFile(Utilities.newBlob(bytes,clean_(payload.mimeType)||'application/octet-stream',fileName));
     const now=now_();files.push({id:file.getId(),name:fileName,size:bytes.length,mimeType:clean_(payload.mimeType),uploadedAt:now});
     upsertByKey_(MATERIAL_SUBMISSION_SHEET_,'回傳ID',clean_(draft['回傳ID']),{'檔案JSON':JSON.stringify(files),'更新時間':now});
-  }finally{lock.releaseLock();}
+  }
   return getMaterialSubmissions_(session,{lessonId:lesson['子課程ID']});
 }
 function submitMaterialSubmission_(session,payload) {
