@@ -1249,7 +1249,7 @@
     const url = clean(item.url);
     const progress = trackerProgress(item);
     if (type === 'TEXT') return `<article class="content-block"><h3>${title}</h3><div class="text-material">${escapeHtml(item.text || '').replace(/\n/g, '<br>')}</div></article>`;
-    if (type === 'FILE') return `<article class="content-block content-block--file"><h3>${title}</h3>${url ? `<div class="download-card"><button class="primary-button primary-button--fit" type="button" data-direct-download="${escapeHtml(url)}">下載教材</button></div>` : '<div class="content-placeholder">教材尚未設定</div>'}</article>`;
+    if (type === 'FILE') return `<article class="content-block content-block--file" data-file-content-id="${escapeHtml(item.id)}"><h3>${title}</h3>${url ? `<div class="download-card"><button class="primary-button primary-button--fit" type="button" data-direct-download="${escapeHtml(url)}">下載教材</button></div>` : '<div class="content-placeholder">教材尚未設定</div>'}</article>`;
     if (type === 'VIDEO') {
       const id = youtubeId(url);
       if (!id) return `<article class="content-block"><h3>${title}</h3><div class="content-placeholder">影片連結格式不正確</div></article>`;
@@ -3075,12 +3075,12 @@
     const data = state.activeSubmission;
     if (!card || !data) return;
     const items = data.items || [], config = data.config || {};
-    card.innerHTML = '<h3>逐教材回傳作業</h3><p class="package-meta">每份教材可分開上傳、送審；已通過 '+(data.approvedCount || 0)+' / '+(data.total || items.length)+' 份。</p>' +
+    card.innerHTML = '<h3>逐教材回傳作業</h3><p class="package-meta">每份教材下方都有獨立上傳區；已通過 '+(data.approvedCount || 0)+' / '+(data.total || items.length)+' 份。</p>' +
       items.map(item => {
         const status=item.latest?.status || '未上傳', files=item.latest?.files || [], unlocked=!['待審核','已通過'].includes(status);
         return '<section class="v1-material-submission" data-material-row="'+escapeHtml(item.contentId)+'"><div class="v1-sub-title"><h4>'+escapeHtml(item.title)+'</h4><span class="tag '+submissionStatusClass(status)+'">'+escapeHtml(status)+'</span></div>'+
           (item.latest?.rejectReason ? '<p class="v1-reject-note">退件原因：'+escapeHtml(item.latest.rejectReason)+'</p>':'')+
-          '<div class="v1-uploaded-list">'+(files.map(x=>'<div class="v1-uploaded-file"><strong>'+escapeHtml(x.name)+'</strong><small>'+formatBytes(x.size)+'</small></div>').join('') || '<p class="package-meta">尚無附件</p>')+'</div>'+
+          '<div class="v1-uploaded-list">'+(files.map(x=>'<div class="v1-uploaded-file"><strong>'+escapeHtml(x.name)+'</strong><small>'+formatBytes(x.size)+'</small>'+(status==='未送審'?'<button type="button" class="mini-button mini-button--danger" data-material-remove="'+escapeHtml(item.contentId)+'" data-file-id="'+escapeHtml(x.id)+'">刪除</button>':'')+'</div>').join('') || '<p class="package-meta">尚無附件</p>')+'</div>'+
           (unlocked ? '<input type="file" data-material-file="'+escapeHtml(item.contentId)+'" accept="'+escapeHtml((config.allowedExtensions||[]).map(x=>'.'+x).join(','))+'"><button type="button" class="secondary-button primary-button--fit" data-material-upload="'+escapeHtml(item.contentId)+'">上傳本份作業</button>' : '')+
           (status==='未送審'&&files.length ? '<button type="button" class="primary-button primary-button--fit" data-material-send="'+escapeHtml(item.contentId)+'">送出本份審核</button>':'')+'</section>';
       }).join('');
@@ -3089,8 +3089,21 @@
       complete.disabled=!approved;
       complete.textContent=approved?'完成此子課程':'尚有教材作業未審核通過';
     }
-    card.querySelectorAll('[data-material-upload]').forEach(button=>button.onclick=async()=>{
-      const contentId=button.dataset.materialUpload, file=card.querySelector('[data-material-file="'+CSS.escape(contentId)+'"]')?.files?.[0];
+    // Keep each assignment beside the corresponding OJT document, not in a long footer-only list.
+    card.querySelectorAll('[data-material-row]').forEach(row => {
+      const target = document.querySelector('[data-file-content-id="' + CSS.escape(row.dataset.materialRow) + '"]');
+      if (target) target.after(row);
+    });
+    document.querySelectorAll('[data-material-remove]').forEach(button=>button.onclick=async()=>{
+      if(!confirm('確定刪除這份尚未送審的附件？'))return;
+      setButtonBusy(button,true,'刪除中…');
+      try{
+        const result=await api('removeMaterialSubmissionFile',{lessonId:lesson.id,contentId:button.dataset.materialRemove,fileId:button.dataset.fileId},state.token,{timeout:MUTATION_TIMEOUT_MS});
+        state.activeSubmission=cacheStudentSubmission(lesson.id,result);renderStudentSubmission();showToast('附件已刪除');
+      }catch(error){showToast(error.message||'刪除失敗');setButtonBusy(button,false);}
+    });
+    document.querySelectorAll('[data-material-upload]').forEach(button=>button.onclick=async()=>{
+      const contentId=button.dataset.materialUpload, file=document.querySelector('[data-material-file="'+CSS.escape(contentId)+'"]')?.files?.[0];
       if(!file){showToast('請先選擇作業檔案');return;}
       if(file.size>Number(config.maxMb||20)*1048576){showToast('檔案超過大小上限');return;}
       setButtonBusy(button,true,'上傳中…');
@@ -3099,7 +3112,7 @@
         state.activeSubmission=cacheStudentSubmission(lesson.id,result);renderStudentSubmission();showToast('附件已上傳');
       }catch(error){showToast(error.message||'上傳失敗');setButtonBusy(button,false);}
     });
-    card.querySelectorAll('[data-material-send]').forEach(button=>button.onclick=async()=>{
+    document.querySelectorAll('[data-material-send]').forEach(button=>button.onclick=async()=>{
       if(!confirm('確定只送出這一份教材作業？'))return;
       setButtonBusy(button,true,'送審中…');
       try{
