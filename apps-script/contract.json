@@ -47,7 +47,8 @@
     "uploadMaterialSubmission",
     "submitMaterialSubmission",
     "reviewMaterialSubmission",
-    "adminMaterialSubmissions"
+    "adminMaterialSubmissions",
+    "removeMaterialSubmissionFile"
   ],
   "features": {
     "adminBasics": true,
