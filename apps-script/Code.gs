@@ -2,7 +2,7 @@ const APP = Object.freeze({
   SPREADSHEET_ID: '1JRLlGxbxgy3VolwulN3dSfq_ETgn0HrKiOnLhyEYT10',
   TZ: 'Asia/Taipei',
   VERSION: 'V1.0',
-  BUILD: 'PDF-DISPLAY-CONTROL-V1-20261029',
+  BUILD: 'PDF-OJT-MATERIAL-V2-20261030',
   SESSION_TTL_SECONDS: 21600,
   SESSION_PROP_PREFIX: 'learning-session-v11-',
   STATIC_CACHE_SECONDS: 60,
@@ -51,7 +51,7 @@ const CACHE_JSON_SAFE_BYTES_ = 90000;
 const FAST_START_VERSION_ = 'V2';
 
 function featureFlags_() {
-  return { adminBasics: true, persistentSession: true, submissions: true, forceComplete: true, lessonApplicability: true, overdueContinue: true, flatSubmissionFolders: true, cleanFast: true, lazyDataV114: true, cacheServiceV2: true, batchUploadV114: true, contentFileUploadV116: true, packageDirectSubmissionV116: true, contentMoveV1: true, courseReuseV1: true, fastPathV1: true, loginRetryV1: true, splitReadV1: true, warmSnapshotV1: true, stabilityCoreV1: true, idleLogoutV1: true, progressFastWriteV1: true, loginReliabilityV2: true, employeeWarmCacheV1: true, authWarmV1: true, loginStatusV1: true, progressSnapshotV1: true, adminTrackingFastV1: true, areaManagerTrackingV1: true, fastStartV2: true, loginFastPathV3: true, trackingSubmissionStatusV1: true, trackingDetailFastV2: true, uxStabilityV1: true, videoCoverageV1: true, pdfDisplayModeV1: true };
+  return { adminBasics: true, persistentSession: true, submissions: true, forceComplete: true, lessonApplicability: true, overdueContinue: true, flatSubmissionFolders: true, cleanFast: true, lazyDataV114: true, cacheServiceV2: true, batchUploadV114: true, contentFileUploadV116: true, packageDirectSubmissionV116: true, contentMoveV1: true, courseReuseV1: true, fastPathV1: true, loginRetryV1: true, splitReadV1: true, warmSnapshotV1: true, stabilityCoreV1: true, idleLogoutV1: true, progressFastWriteV1: true, loginReliabilityV2: true, employeeWarmCacheV1: true, authWarmV1: true, loginStatusV1: true, progressSnapshotV1: true, adminTrackingFastV1: true, areaManagerTrackingV1: true, fastStartV2: true, loginFastPathV3: true, trackingSubmissionStatusV1: true, trackingDetailFastV2: true, uxStabilityV1: true, videoCoverageV1: true, pdfDisplayModeV1: true, perMaterialSubmissionV1: true };
 }
 
 function cacheJsonGet_(key) {
@@ -244,7 +244,13 @@ function doPost(e) {
       case 'saveProgress': return json_({ success: true, data: saveProgress_(requireSession_(token), payload) });
       case 'completeLesson': return json_({ success: true, data: completeLesson_(requireSession_(token), payload) });
       case 'getPdfContent': return json_({ success: true, data: getPdfContent_(requireSession_(token), payload) });
-      case 'getSubmission': return json_({ success: true, data: getSubmission_(requireSession_(token), payload) });
+      case 'getMaterialSubmissions': return json_({ success: true, data: getMaterialSubmissions_(requireSession_(token), payload) });
+       case 'uploadMaterialSubmission': return json_({ success: true, data: uploadMaterialSubmission_(requireSession_(token), payload) });
+      case 'removeMaterialSubmissionFile': return json_({ success: true, data: removeMaterialSubmissionFile_(requireSession_(token), payload) });
+       case 'submitMaterialSubmission': return json_({ success: true, data: submitMaterialSubmission_(requireSession_(token), payload) });
+       case 'reviewMaterialSubmission': return json_({ success: true, data: reviewMaterialSubmission_(requireAdmin_(token), payload) });
+       case 'adminMaterialSubmissions': return json_({ success: true, data: adminMaterialSubmissions_(requireAdmin_(token)) });
+       case 'getSubmission': return json_({ success: true, data: getSubmission_(requireSession_(token), payload) });
       case 'uploadSubmissionFile': return json_({ success: true, data: uploadSubmissionFile_(requireSession_(token), payload) });
       case 'uploadSubmissionFilesBatch': return json_({ success: true, data: uploadSubmissionFilesBatch_(requireSession_(token), payload) });
       case 'removeSubmissionFile': return json_({ success: true, data: removeSubmissionFile_(requireSession_(token), payload) });
@@ -554,6 +560,7 @@ function lessonSummaryDto_(lessonRow, contentRows, progressRows) {
     updatedAt: clean_(p['更新時間']),
     videoPassPercent: nullableNumber_(lessonRow['影片最低完成率']),
     submissionMode: clean_(lessonRow['作業回傳模式']) || '不需要',
+    submissionUnit: submissionUnitForLesson_(lessonRow),
     contentTypes: types,
     contentCount: ownContents.length,
     detailLoaded: false
@@ -630,6 +637,7 @@ function lessonSummaryDtoIndexed_(lessonRow, index, progressByLesson) {
     updatedAt: clean_(p['更新時間']),
     videoPassPercent: nullableNumber_(lessonRow['影片最低完成率']),
     submissionMode: clean_(lessonRow['作業回傳模式']) || '不需要',
+    submissionUnit: submissionUnitForLesson_(lessonRow),
     contentTypes: types,
     contentCount: ownContents.length,
     detailLoaded: false
@@ -717,6 +725,7 @@ function studentLessonAction_(session, payload) {
   const progressRows = progressRowsForEmployee_(session.employeeId).filter(r => clean_(r['子課程ID']) === lessonId);
   const dto = lessonDto_(lessonRow, contentRows, progressRows);
   dto.submissionMode = clean_(lessonRow['作業回傳模式']) || '不需要';
+  dto.submissionUnit = submissionUnitForLesson_(lessonRow);
   dto.submissionNote = clean_(lessonRow['作業說明']);
   dto.applicabilityMode = normalizeApplicabilityMode_(lessonRow['適用對象模式']);
   dto.applicableIds = parseApplicableIds_(lessonRow['適用帳號']);
@@ -754,6 +763,9 @@ function latestSubmissionTrackingIndex_(sourceRows) {
 function trackingSubmissionStatus_(employeeId, lesson, submissionIndex) {
   const mode = clean_(lesson && lesson.submissionMode) || '不需要';
   if (mode === '不需要') return '';
+  if (clean_(lesson && lesson.submissionUnit) === '逐教材回傳') {
+    return materialSummaryStatus_(employeeId, lesson.id);
+  }
   const row = submissionIndex && submissionIndex.get(clean_(employeeId) + '|' + clean_(lesson.id));
   return row ? (clean_(row['狀態']) || '未送審') : '未上傳';
 }
@@ -846,6 +858,8 @@ function adminTrackingDetailFastPackage_(employeeId, packageId) {
         completedAt: clean_(progress['完成時間']),
         updatedAt: clean_(progress['更新時間']),
         submissionMode: clean_(r['作業回傳模式']) || '不需要',
+        submissionUnit: submissionUnitForLesson_(r),
+        materialIds: activeSubmissionMaterials_(lessonId).map(c => clean_(c['內容ID'])),
         detailLoaded: false
       };
     });
@@ -923,6 +937,7 @@ function studentPackagesFromData_(employeeId, data) {
         const progress = progressByLesson.get(lessonId);
         const dto = lessonDto_(l, index.contentsByLesson.get(lessonId) || [], progress ? [progress] : []);
         dto.submissionMode = clean_(l['作業回傳模式']) || '不需要';
+        dto.submissionUnit = submissionUnitForLesson_(l);
         dto.submissionNote = clean_(l['作業說明']);
         dto.applicabilityMode = normalizeApplicabilityMode_(l['適用對象模式']);
         dto.applicableIds = parseApplicableIds_(l['適用帳號']);
@@ -977,6 +992,7 @@ function lessonDto_(lessonRow, contentRows, progressRows) {
     videoTotalSeconds: number_(p['影片總秒數']),
     applicabilityMode: normalizeApplicabilityMode_(lessonRow['適用對象模式']),
     applicableIds: parseApplicableIds_(lessonRow['適用帳號']),
+    submissionUnit: submissionUnitForLesson_(lessonRow),
     contentProgress: progress, contents: contents
   };
   dto.criteria = lessonCriteria_(dto);
@@ -1045,6 +1061,30 @@ function lessonApplicableToEmployee_(employeeId, lessonRow, siblingRows) {
     parseApplicableIds_(row['適用帳號']).forEach(id => { if (specified.indexOf(id) < 0) specified.push(id); });
   });
   return specified.indexOf(clean_(employeeId)) < 0;
+}
+
+function normalizeSubmissionUnit_(value) {
+  return clean_(value) === '逐教材回傳' ? '逐教材回傳' : '整課回傳';
+}
+function submissionUnitForLesson_(row) {
+  return normalizeSubmissionUnit_(row && row['作業回傳單位']);
+}
+function activeSubmissionMaterials_(lessonId) {
+  return rows_(APP.SHEETS.CONTENT)
+    .filter(r => clean_(r['子課程ID']) === clean_(lessonId) && clean_(r['啟用']) === '是')
+    .sort((a,b) => number_(a['排序']) - number_(b['排序']));
+}
+function validateSubmissionContentId_(lessonRow, value, allowEmpty) {
+  const id = clean_(value);
+  if (submissionUnitForLesson_(lessonRow) !== '逐教材回傳') {
+    if (id) throw apiError_('SUBMISSION_UNIT_MISMATCH', '本子課程採整課回傳，不能指定教材。');
+    return '';
+  }
+  if (!id && allowEmpty) return '';
+  if (!id) throw apiError_('SUBMISSION_CONTENT_REQUIRED', '請選擇要回傳的教材。');
+  if (!activeSubmissionMaterials_(lessonRow['子課程ID']).some(r => clean_(r['內容ID']) === id))
+    throw apiError_('SUBMISSION_CONTENT_NOT_FOUND', '這份教材不存在、已停用或不屬於目前子課程。');
+  return id;
 }
 
 function normalizePdfDisplayMode_(value) {
@@ -1125,6 +1165,7 @@ function adminCatalogData_(data) {
         videoPassPercent: nullableNumber_(l['影片最低完成率']),
         submissionMode: clean_(l['作業回傳模式']) || '不需要',
         submissionNote: clean_(l['作業說明']),
+        submissionUnit: submissionUnitForLesson_(l),
         applicabilityMode: normalizeApplicabilityMode_(l['適用對象模式']),
         applicableIds: parseApplicableIds_(l['適用帳號']),
         enabled: clean_(l['啟用']) !== '否',
@@ -1212,9 +1253,10 @@ function saveLesson_(session, payload) {
   const existingLesson=rows_(APP.SHEETS.LESSONS).find(r=>clean_(r['子課程ID'])===id)||{};
   const submissionMode=clean_(payload.submissionMode)||clean_(existingLesson['作業回傳模式'])||'不需要';
   const submissionNote=payload.submissionNote===undefined?clean_(existingLesson['作業說明']):clean_(payload.submissionNote);
+  const submissionUnit=normalizeSubmissionUnit_(payload.submissionUnit===undefined?existingLesson['作業回傳單位']:payload.submissionUnit);
   const applicabilityMode=normalizeApplicabilityMode_(payload.applicabilityMode===undefined?existingLesson['適用對象模式']:payload.applicabilityMode);
   const applicableIds=applicabilityMode==='指定帳號'?parseApplicableIds_(payload.applicableIds===undefined?existingLesson['適用帳號']:payload.applicableIds):[];
-  upsertByKey_(APP.SHEETS.LESSONS,'子課程ID',id,{'子課程ID':id,'母課程ID':packageId,'子課程名稱':title,'必修':payload.required===false?'否':'是','排序':Math.max(1,Math.round(number_(payload.sort)||1)),'通過規則':video===null?'完成確認':'影片達 '+video+'%','影片最低完成率':video===null?'':video,'啟用':payload.enabled===false?'否':'是','作業回傳模式':submissionMode,'作業說明':submissionNote,'適用對象模式':applicabilityMode,'適用帳號':serializeApplicableIds_(applicableIds)});
+  upsertByKey_(APP.SHEETS.LESSONS,'子課程ID',id,{'子課程ID':id,'母課程ID':packageId,'子課程名稱':title,'必修':payload.required===false?'否':'是','排序':Math.max(1,Math.round(number_(payload.sort)||1)),'通過規則':video===null?'完成確認':'影片達 '+video+'%','影片最低完成率':video===null?'':video,'啟用':payload.enabled===false?'否':'是','作業回傳模式':submissionMode,'作業說明':submissionNote,'作業回傳單位':submissionUnit,'適用對象模式':applicabilityMode,'適用帳號':serializeApplicableIds_(applicableIds)});
   return adminPackageResult_(session, packageId, clean_(payload.id) ? '子課程已更新。' : '子課程已建立。', { createdLessonId: clean_(payload.id) ? '' : id });
 }
 
@@ -1380,6 +1422,7 @@ function cloneLessonIntoPackage_(sourceLesson, targetPackageId, options, content
     '啟用': clean_(sourceLesson['啟用']) === '否' ? '否' : '是',
     '作業回傳模式': clean_(sourceLesson['作業回傳模式']) || '不需要',
     '作業說明': clean_(sourceLesson['作業說明']),
+    '作業回傳單位': submissionUnitForLesson_(sourceLesson),
     '適用對象模式': normalizeApplicabilityMode_(sourceLesson['適用對象模式']),
     '適用帳號': serializeApplicableIds_(sourceLesson['適用帳號'])
   });
@@ -1441,7 +1484,7 @@ function copyPackage_(session, payload) {
       upsertByKey_(APP.SHEETS.LESSONS, '子課程ID', newDirectId, {
         '子課程ID': newDirectId, '母課程ID': createdPackageId, '子課程名稱': '__PACKAGE_DIRECT__', '必修': '是', '排序': 0,
         '通過規則': clean_(sourceLesson['通過規則']) || '完成確認', '影片最低完成率': sourceLesson['影片最低完成率'] || '', '啟用': '是',
-        '作業回傳模式': clean_(sourceLesson['作業回傳模式']) || '不需要', '作業說明': clean_(sourceLesson['作業說明']), '適用對象模式': '全部適用', '適用帳號': ''
+        '作業回傳模式': clean_(sourceLesson['作業回傳模式']) || '不需要', '作業說明': clean_(sourceLesson['作業說明']), '作業回傳單位': submissionUnitForLesson_(sourceLesson), '適用對象模式': '全部適用', '適用帳號': ''
       });
       sourceContents.filter(r => clean_(r['子課程ID']) === clean_(sourceLesson['子課程ID'])).sort((a,b) => number_(a['排序']) - number_(b['排序'])).forEach((row,index) => cloneContentRow_(row, newDirectId, number_(row['排序']) || index + 1));
       createdLessonIds.push(newDirectId);
@@ -1849,7 +1892,10 @@ function completeLesson_(session, payload) {
   const criteria = lesson.criteria;
   const submissionMode=clean_(lessonRow['作業回傳模式'])||'不需要';
   let submissionPassed=true;
-  if(submissionMode==='必繳審核') {
+  if (submissionMode==='必繳審核' && submissionUnitForLesson_(lessonRow)==='逐教材回傳') {
+    submissionPassed = materialAllApproved_(session.employeeId, lessonId);
+  }
+  if(submissionMode==='必繳審核' && submissionUnitForLesson_(lessonRow)!=='逐教材回傳') {
     const latestSubmission=submissionForLesson_(session.employeeId,lessonId,rows_(APP.SHEETS.SUBMISSIONS));
     submissionPassed=!!(latestSubmission&&latestSubmission.status==='已通過');
   }
@@ -2395,6 +2441,7 @@ function adminSubmissions_(session){
 function maybeCompleteAfterApproval_(employeeId,lessonRow){
   const lessonId=clean_(lessonRow['子課程ID']),existing=findProgress_(employeeId,lessonId)||{},dto=lessonDto_(lessonRow,rows_(APP.SHEETS.CONTENT).filter(r=>clean_(r['啟用'])==='是'),[existing]);
   if(!dto.criteria.allPassed)return false;
+  if (submissionUnitForLesson_(lessonRow)==='逐教材回傳' && !materialAllApproved_(employeeId,lessonId)) return false;
   const alreadyComplete=clean_(existing['狀態'])==='complete';
   upsertProgress_(employeeId,clean_(lessonRow['母課程ID']),lessonId,{status:'complete',videoSeconds:number_(existing['影片秒數']),pdfSeconds:number_(existing['PDF秒數']),startedAt:clean_(existing['開始時間'])||now_(),completedAt:clean_(existing['完成時間'])||now_(),videoTotalSeconds:number_(existing['影片總秒數']),contentProgress:parseContentProgress_(existing['教材進度JSON']),completionMethod:alreadyComplete?(clean_(existing['完成方式'])||'學員完成'):'作業審核通過',completionNote:clean_(existing['完成備註'])});
   return !alreadyComplete;
@@ -2403,7 +2450,9 @@ function reopenProgressAfterApprovalReversal_(employeeId,lessonRow){
   const lessonId=clean_(lessonRow&&lessonRow['子課程ID']);
   if(!lessonId)return false;
   const existing=findProgress_(employeeId,lessonId);
-  if(!existing||clean_(existing['狀態'])!=='complete'||clean_(existing['完成方式'])!=='作業審核通過')return false;
+  if(!existing||clean_(existing['狀態'])!=='complete')return false;
+  const method=clean_(existing['完成方式']);
+  if(method!=='作業審核通過' && !(submissionUnitForLesson_(lessonRow)==='逐教材回傳' && method==='學員完成'))return false;
   upsertProgress_(employeeId,clean_(lessonRow['母課程ID']),lessonId,{status:'in_progress',videoSeconds:number_(existing['影片秒數']),pdfSeconds:number_(existing['PDF秒數']),startedAt:clean_(existing['開始時間'])||now_(),completedAt:'',videoTotalSeconds:number_(existing['影片總秒數']),contentProgress:parseContentProgress_(existing['教材進度JSON']),completionMethod:'',completionNote:clean_(existing['完成備註'])});
   return true;
 }
@@ -2659,4 +2708,145 @@ function cleanupExpiredSessions_() {
       } catch (e) { props.deleteProperty(key); }
     });
   } catch (e) {}
+}
+
+
+/* Per-material submissions V1: entirely separate ledger, preserving legacy 作業回傳. */
+const MATERIAL_SUBMISSION_SHEET_ = '教材作業回傳';
+const MATERIAL_SUBMISSION_HEADERS_ = ['回傳ID','工號','母課程ID','子課程ID','教材ID','版本','狀態','資料夾ID','檔案JSON','建立時間','送出時間','審核時間','審核人','退件原因','更新時間'];
+function installPerMaterialSubmissionV1() {
+  const db = db_();
+  const lessons = sheet_(APP.SHEETS.LESSONS);
+  const h = lessons.getRange(1,1,1,lessons.getLastColumn()).getDisplayValues()[0];
+  if (!h.includes('作業回傳單位')) lessons.getRange(1,h.length+1).setValue('作業回傳單位');
+  let sheet=db.getSheetByName(MATERIAL_SUBMISSION_SHEET_);
+  if (!sheet) { sheet=db.insertSheet(MATERIAL_SUBMISSION_SHEET_); sheet.getRange(1,1,1,MATERIAL_SUBMISSION_HEADERS_.length).setValues([MATERIAL_SUBMISSION_HEADERS_]); sheet.setFrozenRows(1); }
+  const existing=sheet.getRange(1,1,1,MATERIAL_SUBMISSION_HEADERS_.length).getDisplayValues()[0];
+  if (JSON.stringify(existing)!==JSON.stringify(MATERIAL_SUBMISSION_HEADERS_)) throw apiError_('MATERIAL_HEADER_MISMATCH','教材作業回傳欄位不符，請先檢查資料。');
+  invalidateTable_(APP.SHEETS.LESSONS);
+  return {ready:true, lessonColumn:'作業回傳單位', sheet:MATERIAL_SUBMISSION_SHEET_};
+}
+function materialRows_() { return rows_(MATERIAL_SUBMISSION_SHEET_); }
+function materialHistory_(employeeId,lessonId,contentId) {
+  return materialRows_().filter(r=>clean_(r['工號'])===clean_(employeeId)&&clean_(r['子課程ID'])===clean_(lessonId)&&clean_(r['教材ID'])===clean_(contentId)).sort((a,b)=>number_(a['版本'])-number_(b['版本']));
+}
+function materialLatest_(employeeId,lessonId,contentId) {
+  const history=materialHistory_(employeeId,lessonId,contentId);
+  return history.length?history[history.length-1]:null;
+}
+function materialDto_(r,includeLinks) {
+  if (!r) return null;
+  return {id:clean_(r['回傳ID']),contentId:clean_(r['教材ID']),employeeId:clean_(r['工號']),lessonId:clean_(r['子課程ID']),packageId:clean_(r['母課程ID']),version:number_(r['版本']),status:clean_(r['狀態']),files:parseSubmissionFiles_(r['檔案JSON']).map(f=>({id:clean_(f.id),name:clean_(f.name),size:number_(f.size),uploadedAt:clean_(f.uploadedAt),url:includeLinks?'https://drive.google.com/file/d/'+encodeURIComponent(clean_(f.id))+'/view':''})),submittedAt:clean_(r['送出時間']),reviewedAt:clean_(r['審核時間']),reviewer:clean_(r['審核人']),rejectReason:clean_(r['退件原因'])};
+}
+function materialAllApproved_(employeeId, lessonId) {
+  const materials=activeSubmissionMaterials_(lessonId);
+  return materials.length>0&&materials.every(c=>{const latest=materialLatest_(employeeId,lessonId,c['內容ID']);return latest&&clean_(latest['狀態'])==='已通過';});
+}
+function materialSummaryStatus_(employeeId,lessonId) {
+  const materials=activeSubmissionMaterials_(lessonId);
+  if(!materials.length)return '未上傳';
+  const statuses=materials.map(c=>{const r=materialLatest_(employeeId,lessonId,c['內容ID']);return r?clean_(r['狀態']):'未上傳';});
+  if(statuses.every(x=>x==='已通過'))return '已通過';
+  if(statuses.some(x=>x==='已退件'))return '已退件';
+  if(statuses.some(x=>x==='待審核'))return '待審核';
+  if(statuses.some(x=>x==='未送審'))return '未送審';
+  return '未上傳';
+}
+function getMaterialSubmissions_(session,payload) {
+  if(!isLearnerSession_(session)) throw apiError_('STUDENT_ONLY','只有學員可查看作業。');
+  const lesson=assignedLesson_(session.employeeId,payload.lessonId);
+  if(submissionUnitForLesson_(lesson)!=='逐教材回傳') throw apiError_('MATERIAL_MODE_REQUIRED','此子課程不是逐教材回傳。');
+  const materials=activeSubmissionMaterials_(lesson['子課程ID']);
+  return {lessonId:clean_(lesson['子課程ID']),mode:clean_(lesson['作業回傳模式'])||'不需要',unit:'逐教材回傳',config:publicUploadConfig_(),items:materials.map(c=>({contentId:clean_(c['內容ID']),title:clean_(c['標題']),type:clean_(c['類型']),latest:materialDto_(materialLatest_(session.employeeId,lesson['子課程ID'],c['內容ID']),false)})),approvedCount:materials.filter(c=>{const r=materialLatest_(session.employeeId,lesson['子課程ID'],c['內容ID']);return r&&clean_(r['狀態'])==='已通過';}).length,total:materials.length};
+}
+function materialDraft_(employeeId,lesson,contentId) {
+  const last=materialLatest_(employeeId,lesson['子課程ID'],contentId);
+  if(last&&clean_(last['狀態'])==='未送審')return last;
+  if(last&&clean_(last['狀態'])==='待審核')throw apiError_('SUBMISSION_LOCKED','本教材正在審核。');
+  if(last&&clean_(last['狀態'])==='已通過')throw apiError_('SUBMISSION_APPROVED','本教材已通過。');
+  const version=last?number_(last['版本'])+1:1;
+  const content=rows_(APP.SHEETS.CONTENT).find(c=>clean_(c['內容ID'])===contentId)||{};
+  const folder=childFolder_(submissionMonthFolder_(lesson),safeFolderName_(contentId+'_'+submissionVersionName_(employeeId,version,lesson)+'_'+clean_(content['標題'])));
+  const now=now_(),id=makeId_('MS');
+  upsertByKey_(MATERIAL_SUBMISSION_SHEET_,'回傳ID',id,{'回傳ID':id,'工號':employeeId,'母課程ID':clean_(lesson['母課程ID']),'子課程ID':clean_(lesson['子課程ID']),'教材ID':contentId,'版本':version,'狀態':'未送審','資料夾ID':folder.getId(),'檔案JSON':'[]','建立時間':now,'更新時間':now});
+  return materialLatest_(employeeId,lesson['子課程ID'],contentId);
+}
+function uploadMaterialSubmission_(session,payload) {
+  if(!isLearnerSession_(session))throw apiError_('STUDENT_ONLY','只有學員可以上傳。');
+  const lesson=assignedLesson_(session.employeeId,payload.lessonId);
+  if(clean_(lesson['作業回傳模式'])==='不需要')throw apiError_('SUBMISSION_DISABLED','尚未啟用作業回傳。');
+  const contentId=validateSubmissionContentId_(lesson,payload.contentId,false),config=publicUploadConfig_();
+  if(!config.enabled)throw apiError_('SUBMISSION_DISABLED','作業回傳功能未啟用。');
+  const fileName=cleanFileName_(payload.fileName);
+  const ext=fileName.split('.').pop().toLowerCase();
+  if(!config.allowedExtensions.includes(ext))throw apiError_('FILE_TYPE_NOT_ALLOWED','不支援此檔案格式。');
+  let bytes;try{bytes=Utilities.base64Decode(clean_(payload.fileBase64));}catch(e){throw apiError_('FILE_DATA_INVALID','檔案格式不正確。');}
+  if(!bytes.length||bytes.length>config.maxMb*1024*1024)throw apiError_('FILE_SIZE_INVALID','作業檔案為空或超過限制。');
+  {
+    const draft=materialDraft_(session.employeeId,lesson,contentId);
+    const files=parseSubmissionFiles_(draft['檔案JSON']);
+    if(files.length>=config.maxFilesPerSubmission)throw apiError_('TOO_MANY_FILES','每份教材附件數量已達上限。');
+    const folder=DriveApp.getFolderById(clean_(draft['資料夾ID']));
+    const file=folder.createFile(Utilities.newBlob(bytes,clean_(payload.mimeType)||'application/octet-stream',fileName));
+    const now=now_();files.push({id:file.getId(),name:fileName,size:bytes.length,mimeType:clean_(payload.mimeType),uploadedAt:now});
+    upsertByKey_(MATERIAL_SUBMISSION_SHEET_,'回傳ID',clean_(draft['回傳ID']),{'檔案JSON':JSON.stringify(files),'更新時間':now});
+  }
+  return getMaterialSubmissions_(session,{lessonId:lesson['子課程ID']});
+}
+function removeMaterialSubmissionFile_(session,payload) {
+  if (!isLearnerSession_(session)) throw apiError_('STUDENT_ONLY','只有學員可以移除草稿附件。');
+  const lesson=assignedLesson_(session.employeeId,payload.lessonId);
+  const contentId=validateSubmissionContentId_(lesson,payload.contentId,false);
+  const row=materialLatest_(session.employeeId,lesson['子課程ID'],contentId);
+  if (!row || clean_(row['狀態'])!=='未送審')
+    throw apiError_('SUBMISSION_LOCKED','只有未送審的附件可以刪除。');
+  const files=parseSubmissionFiles_(row['檔案JSON']), fileId=clean_(payload.fileId);
+  const found=files.some(f=>clean_(f.id)===fileId);
+  if (!found) throw apiError_('FILE_NOT_FOUND','找不到該教材的附件。');
+  try { DriveApp.getFileById(fileId).setTrashed(true); }
+  catch (e) { throw apiError_('FILE_DELETE_FAILED','無法移除附件，請稍後再試。'); }
+  upsertByKey_(MATERIAL_SUBMISSION_SHEET_,'回傳ID',clean_(row['回傳ID']),
+    {'檔案JSON':JSON.stringify(files.filter(f=>clean_(f.id)!==fileId)),'更新時間':now_()});
+  return getMaterialSubmissions_(session,{lessonId:lesson['子課程ID']});
+}
+function submitMaterialSubmission_(session,payload) {
+  if(!isLearnerSession_(session))throw apiError_('STUDENT_ONLY','只有學員可以送審。');
+  const lesson=assignedLesson_(session.employeeId,payload.lessonId);
+  const contentId=validateSubmissionContentId_(lesson,payload.contentId,false);
+  const row=materialLatest_(session.employeeId,lesson['子課程ID'],contentId);
+  if(!row||clean_(row['狀態'])!=='未送審'||!parseSubmissionFiles_(row['檔案JSON']).length)throw apiError_('SUBMISSION_EMPTY','請先上傳本教材作業。');
+  const now=now_();upsertByKey_(MATERIAL_SUBMISSION_SHEET_,'回傳ID',clean_(row['回傳ID']),{'狀態':'待審核','送出時間':now,'更新時間':now});
+  return getMaterialSubmissions_(session,{lessonId:lesson['子課程ID']});
+}
+function adminMaterialSubmissionItem_(row) {
+  const dto=materialDto_(row,true),emp=rows_(APP.SHEETS.EMPLOYEES).find(e=>clean_(e['工號'])===dto.employeeId)||{};
+  const pkg=rows_(APP.SHEETS.PACKAGES).find(p=>clean_(p['母課程ID'])===dto.packageId)||{};
+  const lesson=rows_(APP.SHEETS.LESSONS).find(l=>clean_(l['子課程ID'])===dto.lessonId)||{};
+  const content=rows_(APP.SHEETS.CONTENT).find(c=>clean_(c['內容ID'])===dto.contentId)||{};
+  return Object.assign(dto,{name:clean_(emp['姓名']),area:clean_(emp['區域']),store:clean_(emp['店別']),courseTitle:clean_(pkg['母課程名稱']),lessonTitle:clean_(lesson['子課程名稱']),contentTitle:clean_(content['標題'])||'(已移除教材)'});
+}
+function adminMaterialSubmissions_(session) {
+  return {items:materialRows_().map(adminMaterialSubmissionItem_).sort((a,b)=>String(b.submittedAt||'').localeCompare(String(a.submittedAt||'')))};
+}
+function reviewMaterialSubmission_(session,payload) {
+  const id=clean_(payload.id),decision=clean_(payload.decision),reason=clean_(payload.reason);
+  const row=materialRows_().find(r=>clean_(r['回傳ID'])===id);
+  if(!row)throw apiError_('SUBMISSION_NOT_FOUND','找不到該教材的回傳。');
+  if(!['approve','reject'].includes(decision))throw apiError_('REVIEW_DECISION_INVALID','審核決定不正確。');
+  const latest=materialLatest_(row['工號'],row['子課程ID'],row['教材ID']);
+  if(!latest||clean_(latest['回傳ID'])!==id)throw apiError_('SUBMISSION_NOT_LATEST','只能審核最新版本。');
+  const before=clean_(row['狀態']);
+  if(decision==='approve'&&before!=='待審核')throw apiError_('SUBMISSION_NOT_PENDING','只能通過待審核作業。');
+  if(decision==='reject'&&!['待審核','已通過'].includes(before))throw apiError_('SUBMISSION_NOT_REVIEWABLE','目前不能退件。');
+  if(decision==='reject'&&!reason)throw apiError_('REJECT_REASON_REQUIRED','請填寫退件原因。');
+  const now=now_(),status=decision==='approve'?'已通過':'已退件';
+  const updated=upsertByKey_(MATERIAL_SUBMISSION_SHEET_,'回傳ID',id,{'狀態':status,'審核時間':now,'審核人':session.employeeId,'退件原因':decision==='reject'?reason:'','更新時間':now});
+  const lesson=rows_(APP.SHEETS.LESSONS).find(l=>clean_(l['子課程ID'])===clean_(row['子課程ID']));
+  if(lesson&&clean_(lesson['作業回傳模式'])==='必繳審核'){
+    if(decision==='approve'&&materialAllApproved_(row['工號'],row['子課程ID']))maybeCompleteAfterApproval_(clean_(row['工號']),lesson);
+    else if(decision==='reject'&&before==='已通過')reopenProgressAfterApprovalReversal_(clean_(row['工號']),lesson);
+  }
+  invalidateAdminTrackingDetail_(clean_(row['工號']),clean_(row['母課程ID']));
+  invalidateAdminOverview_();
+  return {message:decision==='approve'?'教材作業已通過':'教材作業已退件',updated:adminMaterialSubmissionItem_(updated)};
 }

@@ -3,7 +3,7 @@
 
   const $ = id => document.getElementById(id);
   const VERSION = 'V1.0';
-  const EXPECTED_BACKEND_BUILD = 'PDF-DISPLAY-CONTROL-V1-20261029';
+  const EXPECTED_BACKEND_BUILD = 'PDF-OJT-MATERIAL-V2-20261030';
   const SESSION_KEY = 'reserve_learning_v11_session';
   const LEGACY_SESSION_KEYS = ['reserve_cadre_stage4_2_session', 'learning_backup_v1_session'];
   const SYNC_INTERVAL_MS = 120000;
@@ -1249,7 +1249,7 @@
     const url = clean(item.url);
     const progress = trackerProgress(item);
     if (type === 'TEXT') return `<article class="content-block"><h3>${title}</h3><div class="text-material">${escapeHtml(item.text || '').replace(/\n/g, '<br>')}</div></article>`;
-    if (type === 'FILE') return `<article class="content-block content-block--file"><h3>${title}</h3>${url ? `<div class="download-card"><button class="primary-button primary-button--fit" type="button" data-direct-download="${escapeHtml(url)}">下載教材</button></div>` : '<div class="content-placeholder">教材尚未設定</div>'}</article>`;
+    if (type === 'FILE') return `<article class="content-block content-block--file" data-file-content-id="${escapeHtml(item.id)}"><h3>${title}</h3>${url ? `<div class="download-card"><button class="primary-button primary-button--fit" type="button" data-direct-download="${escapeHtml(url)}">下載教材</button></div>` : '<div class="content-placeholder">教材尚未設定</div>'}</article>`;
     if (type === 'VIDEO') {
       const id = youtubeId(url);
       if (!id) return `<article class="content-block"><h3>${title}</h3><div class="content-placeholder">影片連結格式不正確</div></article>`;
@@ -1379,7 +1379,10 @@
       host.innerHTML = '<div class="pdf-canvas-stack"></div>';
       const stack = host.firstElementChild;
       const available = Math.max(280, host.clientWidth - 28);
-      const pixelRatio = Math.min(window.innerWidth <= 760 ? 1.15 : 1.4, Math.max(1, window.devicePixelRatio || 1));
+      // Render at native device density for crisp CJK text, with a pixel budget for mobile memory.
+      const deviceRatio = Math.max(1, window.devicePixelRatio || 1);
+      const requestedRatio = Math.min(deviceRatio, 3);
+      const MAX_PAGE_PIXELS = window.innerWidth <= 760 ? 10000000 : 16000000;
       const renderPage = async wrap => {
         if (wrap.dataset.rendered === '1' || wrap.dataset.rendering === '1') return;
         wrap.dataset.rendering = '1';
@@ -1388,7 +1391,9 @@
           const page = await pdf.getPage(pageNo);
           const baseViewport = page.getViewport({ scale: 1 });
           const cssScale = Math.min(2, available / baseViewport.width);
-          const renderViewport = page.getViewport({ scale: cssScale * pixelRatio });
+          const cssViewport = page.getViewport({ scale: cssScale });
+          const pageRatio = Math.min(requestedRatio, Math.sqrt(MAX_PAGE_PIXELS / Math.max(1, cssViewport.width * cssViewport.height)));
+          const renderViewport = page.getViewport({ scale: cssScale * Math.max(1, pageRatio) });
           const canvas = wrap.querySelector('canvas');
           canvas.width = Math.max(1, Math.floor(renderViewport.width));
           canvas.height = Math.max(1, Math.floor(renderViewport.height));
@@ -2509,8 +2514,10 @@
     const learners = catalogLearners();
     const learnerIds = new Set(learners.map(l => clean(l.employeeId)));
     const invalidSelected = [...selected].filter(id => !learnerIds.has(id));
+     const unit = lesson.submissionUnit === '逐教材回傳' ? '逐教材回傳' : '整課回傳';
+     const unitEditor = state.features.perMaterialSubmissionV1 ? '<label class="field-group"><span>回傳單位</span><select id="editSubmissionUnit"><option value="整課回傳" '+(unit==='整課回傳'?'selected':'')+'>整課回傳一次（原本方式）</option><option value="逐教材回傳" '+(unit==='逐教材回傳'?'selected':'')+'>每份教材獨立回傳及審核</option></select></label>' : '';
     const learnerRows = learners.map(l => `<label class="learner-check applicability-learner"><input type="checkbox" name="applicableLearner" value="${escapeHtml(l.employeeId)}" ${selected.has(clean(l.employeeId)) ? 'checked' : ''}><span><strong>${escapeHtml(l.name)}｜${escapeHtml(l.employeeId)}</strong><small>${escapeHtml(l.store || '')}｜${escapeHtml(l.role || '')}</small></span></label>`).join('');
-    showAdminEditor(lesson.id ? '編輯子課程' : '新增子課程', `<form id="adminEditForm" class="admin-form" data-admin-form="lesson"><input type="hidden" id="editId" value="${escapeHtml(lesson.id || '')}"><input type="hidden" id="editPackageId" value="${escapeHtml(lesson.packageId || packageId || '')}"><div class="form-grid">${field('子課程名稱', 'editTitle', lesson.title, 'text', 'required')}${field('排序', 'editSort', lesson.sort || 1, 'number', 'min="1" required')}<label class="field-group"><span>必修</span><select id="editRequired">${yesNoSelect(lesson.required)}</select></label><label class="field-group"><span>啟用</span><select id="editEnabled">${yesNoSelect(lesson.enabled)}</select></label>${field('影片最低完成率 %', 'editVideo', lesson.videoPassPercent ?? '', 'number', 'min="1" max="100"')}<label class="field-group"><span>作業回傳</span><select id="editSubmissionMode"><option value="不需要" ${lesson.submissionMode === '不需要' ? 'selected' : ''}>不需要</option><option value="選填" ${lesson.submissionMode === '選填' ? 'selected' : ''}>選填</option><option value="必繳審核" ${lesson.submissionMode === '必繳審核' ? 'selected' : ''}>必繳並審核</option></select></label><label class="field-group field-group--wide"><span>適用對象</span><select id="editApplicabilityMode"><option value="全部適用" ${lesson.applicabilityMode !== '指定帳號' && lesson.applicabilityMode !== '其餘未指定' ? 'selected' : ''}>全部適用（一般課程使用）</option><option value="指定帳號" ${lesson.applicabilityMode === '指定帳號' ? 'selected' : ''}>指定門市／帳號</option><option value="其餘未指定" ${lesson.applicabilityMode === '其餘未指定' ? 'selected' : ''}>其餘未指定門市／帳號</option></select></label><div id="applicabilityPicker" class="field-group field-group--wide applicability-picker"><span>指定門市／帳號</span><div id="applicabilitySelectionSummary" class="form-hint"></div>${invalidSelected.length ? `<div class="v1-reject-note"><strong>資料異常：</strong>${escapeHtml(invalidSelected.join('、'))} 無法對應員工主檔，重新儲存前請確認選取人員。</div>` : ''}<input id="applicabilitySearch" type="search" placeholder="搜尋帳號、姓名或店別"><div id="applicabilitySearchResult" class="v1-search-result"></div><div class="learner-checklist applicability-list">${learnerRows || '<div class="manage-empty">目前沒有可選帳號</div>'}</div></div><label class="field-group field-group--wide"><span>作業說明</span><textarea id="editSubmissionNote" placeholder="例如：請下載檢核表填寫後回傳。">${escapeHtml(lesson.submissionNote || '')}</textarea></label></div><p class="form-hint">分流課程可分別設定指定對象與其餘對象。</p><div class="form-actions"><button class="secondary-button" type="button" data-cancel-editor>取消</button><button class="primary-button" type="submit">儲存</button></div></form>`);
+    showAdminEditor(lesson.id ? '編輯子課程' : '新增子課程', `<form id="adminEditForm" class="admin-form" data-admin-form="lesson"><input type="hidden" id="editId" value="${escapeHtml(lesson.id || '')}"><input type="hidden" id="editPackageId" value="${escapeHtml(lesson.packageId || packageId || '')}"><div class="form-grid">${field('子課程名稱', 'editTitle', lesson.title, 'text', 'required')}${field('排序', 'editSort', lesson.sort || 1, 'number', 'min="1" required')}<label class="field-group"><span>必修</span><select id="editRequired">${yesNoSelect(lesson.required)}</select></label><label class="field-group"><span>啟用</span><select id="editEnabled">${yesNoSelect(lesson.enabled)}</select></label>${field('影片最低完成率 %', 'editVideo', lesson.videoPassPercent ?? '', 'number', 'min="1" max="100"')}<label class="field-group"><span>作業回傳</span><select id="editSubmissionMode"><option value="不需要" ${lesson.submissionMode === '不需要' ? 'selected' : ''}>不需要</option><option value="選填" ${lesson.submissionMode === '選填' ? 'selected' : ''}>選填</option><option value="必繳審核" ${lesson.submissionMode === '必繳審核' ? 'selected' : ''}>必繳並審核</option></select></label>${unitEditor}<label class="field-group field-group--wide"><span>適用對象</span><select id="editApplicabilityMode"><option value="全部適用" ${lesson.applicabilityMode !== '指定帳號' && lesson.applicabilityMode !== '其餘未指定' ? 'selected' : ''}>全部適用（一般課程使用）</option><option value="指定帳號" ${lesson.applicabilityMode === '指定帳號' ? 'selected' : ''}>指定門市／帳號</option><option value="其餘未指定" ${lesson.applicabilityMode === '其餘未指定' ? 'selected' : ''}>其餘未指定門市／帳號</option></select></label><div id="applicabilityPicker" class="field-group field-group--wide applicability-picker"><span>指定門市／帳號</span><div id="applicabilitySelectionSummary" class="form-hint"></div>${invalidSelected.length ? `<div class="v1-reject-note"><strong>資料異常：</strong>${escapeHtml(invalidSelected.join('、'))} 無法對應員工主檔，重新儲存前請確認選取人員。</div>` : ''}<input id="applicabilitySearch" type="search" placeholder="搜尋帳號、姓名或店別"><div id="applicabilitySearchResult" class="v1-search-result"></div><div class="learner-checklist applicability-list">${learnerRows || '<div class="manage-empty">目前沒有可選帳號</div>'}</div></div><label class="field-group field-group--wide"><span>作業說明</span><textarea id="editSubmissionNote" placeholder="例如：請下載檢核表填寫後回傳。">${escapeHtml(lesson.submissionNote || '')}</textarea></label></div><p class="form-hint">分流課程可分別設定指定對象與其餘對象。</p><div class="form-actions"><button class="secondary-button" type="button" data-cancel-editor>取消</button><button class="primary-button" type="submit">儲存</button></div></form>`);
     bindEditorForm();
     const mode = $('editApplicabilityMode'), picker = $('applicabilityPicker'), search = $('applicabilitySearch'), selectionSummary = $('applicabilitySelectionSummary');
     const refreshSelectionSummary = () => {
@@ -2812,7 +2819,7 @@
         state.manageOpenPackages.add(packageId);
       } else if (kind === 'lesson') {
         action = 'saveLesson';
-        payload = { id: $('editId').value, packageId: $('editPackageId').value, title: $('editTitle').value, sort: Number($('editSort').value), required: boolValue('editRequired'), enabled: boolValue('editEnabled'), videoPassPercent: optionalNumber('editVideo'), submissionMode: $('editSubmissionMode').value, submissionNote: $('editSubmissionNote').value, applicabilityMode: $('editApplicabilityMode')?.value || '全部適用', applicableIds: [...document.querySelectorAll('input[name="applicableLearner"]:checked')].map(x => x.value) };
+        payload = { id: $('editId').value, packageId: $('editPackageId').value, title: $('editTitle').value, sort: Number($('editSort').value), required: boolValue('editRequired'), enabled: boolValue('editEnabled'), videoPassPercent: optionalNumber('editVideo'), submissionMode: $('editSubmissionMode').value, submissionNote: $('editSubmissionNote').value, submissionUnit: $('editSubmissionUnit')?.value || '整課回傳', applicabilityMode: $('editApplicabilityMode')?.value || '全部適用', applicableIds: [...document.querySelectorAll('input[name="applicableLearner"]:checked')].map(x => x.value) };
         state.manageOpenPackages.add(payload.packageId);
       } else if (kind === 'content') {
         action = 'saveContent';
@@ -2975,6 +2982,10 @@
     if (body) body.innerHTML = '<div class="empty-state"><h3>載入作業資料中…</h3></div>';
     try {
       const data = await api('adminSubmissions');
+       if (state.features.perMaterialSubmissionV1) {
+         const material = await api('adminMaterialSubmissions');
+         data.items = [...(data.items || []), ...(material.items || []).map(x => ({...x,materialSubmission:true}))];
+       }
       state.adminSubmissions = data;
       state.adminSubmissionsLoadedAt = Date.now();
       state.uploadConfig = { ...state.uploadConfig, ...(data.config || {}) };
@@ -3010,7 +3021,7 @@
   function renderAdminSubmissionList() {
     const host = $('submissionAdminList'); if (!host) return;
     const q = normalize(state.adminSubmissionSearch), filter = state.adminSubmissionStatus || '', area = state.adminSubmissionArea || '';
-    const items = (state.adminSubmissions.items || []).filter(x => (!filter || x.status === filter) && (!area || clean(x.area) === area) && (!q || normalize(`${x.employeeId} ${x.name} ${x.area} ${x.store} ${x.courseTitle} ${x.lessonTitle}`).includes(q)));
+    const items = (state.adminSubmissions.items || []).filter(x => (!filter || x.status === filter) && (!area || clean(x.area) === area) && (!q || normalize(`${x.employeeId} ${x.name} ${x.area} ${x.store} ${x.courseTitle} ${x.lessonTitle} ${x.contentTitle||''}`).includes(q)));
     host.innerHTML = items.length ? items.map(x => {
       const location = [clean(x.area), clean(x.store)].filter(Boolean).join('｜');
       const reviewActions = x.status === '待審核'
@@ -3018,7 +3029,7 @@
         : x.status === '已通過'
           ? `<div class="v1-review-actions"><button class="secondary-button primary-button--fit" type="button" data-review-reject="${escapeHtml(x.id)}" data-review-from="已通過">更正為退件</button></div>`
           : '';
-      return `<article class="card v1-sub-admin-card"><div class="v1-sub-card-head"><div><strong>${escapeHtml(x.name || x.employeeId)}｜${escapeHtml(x.employeeId)}</strong><p class="package-meta">${escapeHtml(location || '未設定區域／店別')}｜${escapeHtml(x.courseTitle)} → ${escapeHtml(x.lessonTitle === '__PACKAGE_DIRECT__' ? '課程回傳' : x.lessonTitle)}</p></div><span class="tag ${submissionStatusClass(x.status)}">${escapeHtml(x.status)}</span></div><div class="v1-sub-meta"><span>V${String(Math.max(1,n(x.version))).padStart(2,'0')}</span><span>送出：${escapeHtml(x.submittedAt || '—')}</span><span>審核：${escapeHtml(x.reviewedAt || '—')}</span></div>${x.rejectReason ? `<div class="v1-reject-note"><strong>退件原因：</strong>${escapeHtml(x.rejectReason)}</div>` : ''}<div class="v1-file-grid">${(x.files || []).map(file => `<a class="v1-file-link" href="${escapeHtml(file.url)}" target="_blank" rel="noopener">${escapeHtml(file.name)} <small>${formatBytes(file.size)}</small></a>`).join('') || '<span class="package-meta">尚無附件</span>'}</div>${reviewActions}</article>`;
+      return `<article class="card v1-sub-admin-card"><div class="v1-sub-card-head"><div><strong>${escapeHtml(x.name || x.employeeId)}｜${escapeHtml(x.employeeId)}</strong><p class="package-meta">${escapeHtml(location || '未設定區域／店別')}｜${escapeHtml(x.courseTitle)} → ${escapeHtml(x.lessonTitle === '__PACKAGE_DIRECT__' ? '課程回傳' : x.lessonTitle)}${x.contentTitle ? ` → ${escapeHtml(x.contentTitle)}` : ''}}</p></div><span class="tag ${submissionStatusClass(x.status)}">${escapeHtml(x.status)}</span></div><div class="v1-sub-meta"><span>V${String(Math.max(1,n(x.version))).padStart(2,'0')}</span><span>送出：${escapeHtml(x.submittedAt || '—')}</span><span>審核：${escapeHtml(x.reviewedAt || '—')}</span></div>${x.rejectReason ? `<div class="v1-reject-note"><strong>退件原因：</strong>${escapeHtml(x.rejectReason)}</div>` : ''}<div class="v1-file-grid">${(x.files || []).map(file => `<a class="v1-file-link" href="${escapeHtml(file.url)}" target="_blank" rel="noopener">${escapeHtml(file.name)} <small>${formatBytes(file.size)}</small></a>`).join('') || '<span class="package-meta">尚無附件</span>'}</div>${reviewActions}</article>`;
     }).join('') : '<div class="empty-state"><h3>查無作業回傳</h3><p>目前搜尋、區域與狀態條件沒有符合資料。</p></div>';
     host.querySelectorAll('[data-review-approve]').forEach(button => button.onclick = () => reviewSubmission(button.dataset.reviewApprove, 'approve', button, button.dataset.reviewFrom));
     host.querySelectorAll('[data-review-reject]').forEach(button => button.onclick = () => reviewSubmission(button.dataset.reviewReject, 'reject', button, button.dataset.reviewFrom));
@@ -3034,12 +3045,13 @@
     } else if (!confirm('確定將這份作業設為「已通過」？')) return;
     setButtonBusy(button, true);
     try {
-      const data = await api('reviewSubmission', { id, decision, reason, previousStatus: current }, state.token, { retry: false, timeout: MUTATION_TIMEOUT_MS });
+      const isMaterial = !!(state.adminSubmissions.items||[]).find(x=>x.id===id)?.materialSubmission;
+       const data = await api(isMaterial?'reviewMaterialSubmission':'reviewSubmission', { id, decision, reason, previousStatus: current }, state.token, { retry: false, timeout: MUTATION_TIMEOUT_MS });
       if (data?.updated?.id) {
         const items = Array.isArray(state.adminSubmissions.items) ? state.adminSubmissions.items : [];
         const index = items.findIndex(item => clean(item.id) === clean(data.updated.id));
         if (index >= 0) items[index] = { ...items[index], ...data.updated };
-        else items.unshift(data.updated);
+        else items.unshift({...data.updated,materialSubmission:isMaterial});
         state.adminSubmissions.items = items;
       } else if (Array.isArray(data?.items)) {
         state.adminSubmissions = data;
@@ -3056,6 +3068,60 @@
         loadAdminSubmissions(true).catch(() => {});
       } else showToast(error.message || '審核失敗');
     } finally { setButtonBusy(button, false); }
+  }
+
+  function renderPerMaterialStudentSubmission(lesson) {
+    const card = document.querySelector('[data-student-submission]');
+    const data = state.activeSubmission;
+    if (!card || !data) return;
+    const items = data.items || [], config = data.config || {};
+    // Remove previously relocated cards before rebuilding this lesson's independent uploads.
+    $('lessonContent')?.querySelectorAll('[data-material-row]').forEach(row => row.remove());
+    card.innerHTML = '<h3>逐教材回傳作業</h3><p class="package-meta">每份教材下方都有獨立上傳區；已通過 '+(data.approvedCount || 0)+' / '+(data.total || items.length)+' 份。</p>' +
+      items.map(item => {
+        const status=item.latest?.status || '未上傳', files=item.latest?.files || [], unlocked=!['待審核','已通過'].includes(status);
+        return '<section class="v1-material-submission" data-material-row="'+escapeHtml(item.contentId)+'"><div class="v1-sub-title"><h4>'+escapeHtml(item.title)+'</h4><span class="tag '+submissionStatusClass(status)+'">'+escapeHtml(status)+'</span></div>'+
+          (item.latest?.rejectReason ? '<p class="v1-reject-note">退件原因：'+escapeHtml(item.latest.rejectReason)+'</p>':'')+
+          '<div class="v1-uploaded-list">'+(files.map(x=>'<div class="v1-uploaded-file"><strong>'+escapeHtml(x.name)+'</strong><small>'+formatBytes(x.size)+'</small>'+(status==='未送審'?'<button type="button" class="mini-button mini-button--danger" data-material-remove="'+escapeHtml(item.contentId)+'" data-file-id="'+escapeHtml(x.id)+'">刪除</button>':'')+'</div>').join('') || '<p class="package-meta">尚無附件</p>')+'</div>'+
+          (unlocked ? '<input type="file" data-material-file="'+escapeHtml(item.contentId)+'" accept="'+escapeHtml((config.allowedExtensions||[]).map(x=>'.'+x).join(','))+'"><button type="button" class="secondary-button primary-button--fit" data-material-upload="'+escapeHtml(item.contentId)+'">上傳本份作業</button>' : '')+
+          (status==='未送審'&&files.length ? '<button type="button" class="primary-button primary-button--fit" data-material-send="'+escapeHtml(item.contentId)+'">送出本份審核</button>':'')+'</section>';
+      }).join('');
+    if(data.mode==='必繳審核'&&lesson.status!=='complete'){
+      const approved=items.length>0&&items.every(x=>x.latest?.status==='已通過'),complete=$('completeLessonButton');
+      complete.disabled=!approved;
+      complete.textContent=approved?'完成此子課程':'尚有教材作業未審核通過';
+    }
+    // Keep each assignment beside the corresponding OJT document, not in a long footer-only list.
+    card.querySelectorAll('[data-material-row]').forEach(row => {
+      const target = document.querySelector('[data-file-content-id="' + CSS.escape(row.dataset.materialRow) + '"]');
+      if (target) target.after(row);
+    });
+    document.querySelectorAll('[data-material-remove]').forEach(button=>button.onclick=async()=>{
+      if(!confirm('確定刪除這份尚未送審的附件？'))return;
+      setButtonBusy(button,true,'刪除中…');
+      try{
+        const result=await api('removeMaterialSubmissionFile',{lessonId:lesson.id,contentId:button.dataset.materialRemove,fileId:button.dataset.fileId},state.token,{timeout:MUTATION_TIMEOUT_MS});
+        state.activeSubmission=cacheStudentSubmission(lesson.id,result);renderStudentSubmission();showToast('附件已刪除');
+      }catch(error){showToast(error.message||'刪除失敗');setButtonBusy(button,false);}
+    });
+    document.querySelectorAll('[data-material-upload]').forEach(button=>button.onclick=async()=>{
+      const contentId=button.dataset.materialUpload, file=document.querySelector('[data-material-file="'+CSS.escape(contentId)+'"]')?.files?.[0];
+      if(!file){showToast('請先選擇作業檔案');return;}
+      if(file.size>Number(config.maxMb||20)*1048576){showToast('檔案超過大小上限');return;}
+      setButtonBusy(button,true,'上傳中…');
+      try{
+        const result=await api('uploadMaterialSubmission',{lessonId:lesson.id,contentId,fileName:file.name,mimeType:file.type||'application/octet-stream',fileBase64:await fileBase64(file)},state.token,{timeout:120000});
+        state.activeSubmission=cacheStudentSubmission(lesson.id,result);renderStudentSubmission();showToast('附件已上傳');
+      }catch(error){showToast(error.message||'上傳失敗');setButtonBusy(button,false);}
+    });
+    document.querySelectorAll('[data-material-send]').forEach(button=>button.onclick=async()=>{
+      if(!confirm('確定只送出這一份教材作業？'))return;
+      setButtonBusy(button,true,'送審中…');
+      try{
+        const result=await api('submitMaterialSubmission',{lessonId:lesson.id,contentId:button.dataset.materialSend},state.token,{timeout:30000});
+        state.activeSubmission=cacheStudentSubmission(lesson.id,result);renderStudentSubmission();showToast('本份教材已送審');
+      }catch(error){showToast(error.message||'送審失敗');setButtonBusy(button,false);}
+    });
   }
 
   function renderStudentSubmissionShell(lesson) {
@@ -3093,6 +3159,9 @@
     const entry = state.submissionCache.get(lessonId);
     if (!entry) return null;
     if (Date.now() - entry.savedAt > SUBMISSION_CACHE_MS) { state.submissionCache.delete(lessonId); return null; }
+    const current = activeLesson().lesson;
+    const expectedMaterial = current?.id === lessonId && current.submissionUnit === '逐教材回傳' && state.features.perMaterialSubmissionV1;
+    if (expectedMaterial !== (entry.data?.unit === '逐教材回傳')) { state.submissionCache.delete(lessonId); return null; }
     return entry.data;
   }
 
@@ -3103,7 +3172,9 @@
       const inflight = state.submissionInflight.get(lessonId);
       if (inflight) return inflight;
     }
-    const task = api('getSubmission', { lessonId })
+    const current = activeLesson().lesson;
+    const perMaterial = current?.id === lessonId && current.submissionUnit === '逐教材回傳' && state.features.perMaterialSubmissionV1;
+    const task = api(perMaterial ? 'getMaterialSubmissions' : 'getSubmission', { lessonId })
       .then(data => cacheStudentSubmission(lessonId, data))
       .finally(() => state.submissionInflight.delete(lessonId));
     state.submissionInflight.set(lessonId, task);
@@ -3130,6 +3201,10 @@
 
   function renderStudentSubmission() {
     const { lesson } = activeLesson();
+    if (lesson?.submissionUnit === '逐教材回傳' && state.features.perMaterialSubmissionV1) {
+      renderPerMaterialStudentSubmission(lesson);
+      return;
+    }
     const card = document.querySelector('[data-student-submission]');
     if (!lesson || !card || !state.activeSubmission) return;
     const data = state.activeSubmission;
