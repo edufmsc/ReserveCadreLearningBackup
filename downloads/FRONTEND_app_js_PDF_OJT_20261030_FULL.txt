@@ -3070,57 +3070,124 @@
     } finally { setButtonBusy(button, false); }
   }
 
+
+  // Each OJT assignment is a compact toolbar within its existing document card.
   function renderPerMaterialStudentSubmission(lesson) {
     const card = document.querySelector('[data-student-submission]');
+    const host = $('lessonContent');
     const data = state.activeSubmission;
-    if (!card || !data) return;
+    if (!card || !host || !data) return;
     const items = data.items || [], config = data.config || {};
-    // Remove previously relocated cards before rebuilding this lesson's independent uploads.
-    $('lessonContent')?.querySelectorAll('[data-material-row]').forEach(row => row.remove());
-    card.innerHTML = '<h3>逐教材回傳作業</h3><p class="package-meta">每份教材下方都有獨立上傳區；已通過 '+(data.approvedCount || 0)+' / '+(data.total || items.length)+' 份。</p>' +
+    const expanded = new Set([...host.querySelectorAll('[data-material-detail]:not([hidden])')]
+      .map(el => el.closest('[data-material-row]')?.dataset.materialRow).filter(Boolean));
+    host.querySelectorAll('[data-material-row]').forEach(row => row.remove());
+    card.classList.add('v1-student-submission--compact');
+    card.innerHTML = '<div class="v1-material-progress-note">作業審核進度：<strong>' +
+      Number(data.approvedCount || 0) + ' / ' + Number(data.total || items.length) + '</strong> 份通過</div>' +
       items.map(item => {
-        const status=item.latest?.status || '未上傳', files=item.latest?.files || [], unlocked=!['待審核','已通過'].includes(status);
-        return '<section class="v1-material-submission" data-material-row="'+escapeHtml(item.contentId)+'"><div class="v1-sub-title"><h4>'+escapeHtml(item.title)+'</h4><span class="tag '+submissionStatusClass(status)+'">'+escapeHtml(status)+'</span></div>'+
-          (item.latest?.rejectReason ? '<p class="v1-reject-note">退件原因：'+escapeHtml(item.latest.rejectReason)+'</p>':'')+
-          '<div class="v1-uploaded-list">'+(files.map(x=>'<div class="v1-uploaded-file"><strong>'+escapeHtml(x.name)+'</strong><small>'+formatBytes(x.size)+'</small>'+(status==='未送審'?'<button type="button" class="mini-button mini-button--danger" data-material-remove="'+escapeHtml(item.contentId)+'" data-file-id="'+escapeHtml(x.id)+'">刪除</button>':'')+'</div>').join('') || '<p class="package-meta">尚無附件</p>')+'</div>'+
-          (unlocked ? '<input type="file" data-material-file="'+escapeHtml(item.contentId)+'" accept="'+escapeHtml((config.allowedExtensions||[]).map(x=>'.'+x).join(','))+'"><button type="button" class="secondary-button primary-button--fit" data-material-upload="'+escapeHtml(item.contentId)+'">上傳本份作業</button>' : '')+
-          (status==='未送審'&&files.length ? '<button type="button" class="primary-button primary-button--fit" data-material-send="'+escapeHtml(item.contentId)+'">送出本份審核</button>':'')+'</section>';
+        const id = escapeHtml(item.contentId);
+        const status = item.latest?.status || '未上傳';
+        const files = item.latest?.files || [];
+        const rejected = status === '已退件';
+        const unlocked = status !== '待審核' && status !== '已通過';
+        const detailAvailable = !!(files.length || item.latest?.rejectReason);
+        const fileCount = files.length ? files.length + ' 個附件' : '尚無附件';
+        const actionName = status === '未送審' ? '加傳附件' : rejected ? '重新上傳' : '上傳作業';
+        const pick = unlocked ?
+          '<button type="button" class="mini-button v1-material-primary-action" data-material-pick="' + id + '">' + actionName + '</button>' +
+          '<input type="file" data-material-file="' + id + '" accept="' + escapeHtml((config.allowedExtensions || []).map(x => '.' + x).join(',')) + '" hidden>' : '';
+        const send = status === '未送審' && files.length ?
+          '<button type="button" class="mini-button v1-material-send" data-material-send="' + id + '">送出審核</button>' : '';
+        const inspect = detailAvailable ?
+          '<button type="button" class="mini-button v1-material-inspect" data-material-toggle="' + id +
+          '" aria-expanded="' + (expanded.has(item.contentId) ? 'true' : 'false') + '">' +
+          (rejected ? '查看退件原因' : '查看附件 ' + files.length) + '</button>' : '';
+        const details = detailAvailable ?
+          '<div class="v1-material-detail" data-material-detail ' + (expanded.has(item.contentId) ? '' : 'hidden') + '>' +
+          (item.latest?.rejectReason ? '<p class="v1-reject-note"><strong>退件原因：</strong>' + escapeHtml(item.latest.rejectReason) + '</p>' : '') +
+          files.map(file => '<div class="v1-material-file"><span>' + escapeHtml(file.name) + ' <small>' + formatBytes(file.size) + '</small></span>' +
+            (status === '未送審' ? '<button type="button" class="mini-button mini-button--danger" data-material-remove="' +
+              id + '" data-file-id="' + escapeHtml(file.id) + '">刪除</button>' : '') + '</div>').join('') + '</div>' : '';
+        return '<div class="v1-material-submission" data-material-row="' + id + '">' +
+          '<strong class="v1-material-fallback-title" data-material-fallback-name hidden>' + escapeHtml(item.title) + '</strong>' +
+          '<div class="v1-material-bar"><span class="tag ' + submissionStatusClass(status) + '">' + escapeHtml(status) + '</span>' +
+          '<small class="v1-material-file-count">' + escapeHtml(fileCount) + '</small>' +
+          '<div class="v1-material-actions">' + inspect + pick + send + '</div></div>' + details + '</div>';
       }).join('');
-    if(data.mode==='必繳審核'&&lesson.status!=='complete'){
-      const approved=items.length>0&&items.every(x=>x.latest?.status==='已通過'),complete=$('completeLessonButton');
-      complete.disabled=!approved;
-      complete.textContent=approved?'完成此子課程':'尚有教材作業未審核通過';
+    if (data.mode === '必繳審核' && lesson.status !== 'complete') {
+      const complete = $('completeLessonButton');
+      if (complete) {
+        const passed = items.length > 0 && items.every(item => item.latest?.status === '已通過');
+        complete.disabled = !passed;
+        complete.textContent = passed ? '完成此子課程' : '尚有教材作業未審核通過';
+      }
     }
-    // Keep each assignment beside the corresponding OJT document, not in a long footer-only list.
     card.querySelectorAll('[data-material-row]').forEach(row => {
-      const target = document.querySelector('[data-file-content-id="' + CSS.escape(row.dataset.materialRow) + '"]');
-      if (target) target.after(row);
+      const id = CSS.escape(row.dataset.materialRow);
+      const target = host.querySelector('[data-file-content-id="' + id + '"], [data-media-block][data-content-id="' + id + '"]');
+      if (target) { row.classList.add('v1-material-submission--inline'); target.appendChild(row); }
+      else { const fallback = row.querySelector('[data-material-fallback-name]'); if (fallback) fallback.hidden = false; }
     });
-    document.querySelectorAll('[data-material-remove]').forEach(button=>button.onclick=async()=>{
-      if(!confirm('確定刪除這份尚未送審的附件？'))return;
-      setButtonBusy(button,true,'刪除中…');
-      try{
-        const result=await api('removeMaterialSubmissionFile',{lessonId:lesson.id,contentId:button.dataset.materialRemove,fileId:button.dataset.fileId},state.token,{timeout:MUTATION_TIMEOUT_MS});
-        state.activeSubmission=cacheStudentSubmission(lesson.id,result);renderStudentSubmission();showToast('附件已刪除');
-      }catch(error){showToast(error.message||'刪除失敗');setButtonBusy(button,false);}
+    host.querySelectorAll('[data-material-toggle]').forEach(button => button.onclick = () => {
+      const detail = button.closest('[data-material-row]')?.querySelector('[data-material-detail]');
+      if (!detail) return;
+      detail.hidden = !detail.hidden;
+      button.setAttribute('aria-expanded', String(!detail.hidden));
     });
-    document.querySelectorAll('[data-material-upload]').forEach(button=>button.onclick=async()=>{
-      const contentId=button.dataset.materialUpload, file=document.querySelector('[data-material-file="'+CSS.escape(contentId)+'"]')?.files?.[0];
-      if(!file){showToast('請先選擇作業檔案');return;}
-      if(file.size>Number(config.maxMb||20)*1048576){showToast('檔案超過大小上限');return;}
-      setButtonBusy(button,true,'上傳中…');
-      try{
-        const result=await api('uploadMaterialSubmission',{lessonId:lesson.id,contentId,fileName:file.name,mimeType:file.type||'application/octet-stream',fileBase64:await fileBase64(file)},state.token,{timeout:120000});
-        state.activeSubmission=cacheStudentSubmission(lesson.id,result);renderStudentSubmission();showToast('附件已上傳');
-      }catch(error){showToast(error.message||'上傳失敗');setButtonBusy(button,false);}
+    host.querySelectorAll('[data-material-pick]').forEach(button => {
+      const row = button.closest('[data-material-row]');
+      const input = row?.querySelector('[data-material-file]');
+      if (!input) return;
+      button.onclick = () => input.click();
+      input.onchange = async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        const extension = (file.name.split('.').pop() || '').toLowerCase();
+        const allowed = (config.allowedExtensions || []).map(x => String(x).toLowerCase());
+        if (!file.size || file.size > Number(config.maxMb || 20) * 1048576 ||
+            (allowed.length && !allowed.includes(extension))) {
+          showToast('檔案格式不支援或超過 ' + Number(config.maxMb || 20) + ' MB 限制');
+          input.value = ''; return;
+        }
+        setButtonBusy(button, true, '上傳中…');
+        try {
+          const result = await api('uploadMaterialSubmission', {
+            lessonId: lesson.id, contentId: row.dataset.materialRow, fileName: file.name,
+            mimeType: file.type || 'application/octet-stream', fileBase64: await fileBase64(file)
+          }, state.token, { retry: false, timeout: 120000 });
+          state.activeSubmission = cacheStudentSubmission(lesson.id, result);
+          renderStudentSubmission();
+          showToast('附件已上傳，請再按「送出審核」');
+        } catch (error) {
+          showToast(error.message || '上傳失敗');
+          if (button.isConnected) setButtonBusy(button, false);
+          input.value = '';
+        }
+      };
     });
-    document.querySelectorAll('[data-material-send]').forEach(button=>button.onclick=async()=>{
-      if(!confirm('確定只送出這一份教材作業？'))return;
-      setButtonBusy(button,true,'送審中…');
-      try{
-        const result=await api('submitMaterialSubmission',{lessonId:lesson.id,contentId:button.dataset.materialSend},state.token,{timeout:30000});
-        state.activeSubmission=cacheStudentSubmission(lesson.id,result);renderStudentSubmission();showToast('本份教材已送審');
-      }catch(error){showToast(error.message||'送審失敗');setButtonBusy(button,false);}
+    host.querySelectorAll('[data-material-send]').forEach(button => button.onclick = async () => {
+      if (!confirm('確定只送出這份教材作業供教育中心審核？')) return;
+      setButtonBusy(button, true, '送審中…');
+      try {
+        const result = await api('submitMaterialSubmission', {
+          lessonId: lesson.id, contentId: button.dataset.materialSend
+        }, state.token, { retry: false, timeout: 30000 });
+        state.activeSubmission = cacheStudentSubmission(lesson.id, result);
+        renderStudentSubmission();
+        showToast('這份教材已送出審核');
+      } catch (error) { showToast(error.message || '送審失敗'); if (button.isConnected) setButtonBusy(button, false); }
+    });
+    host.querySelectorAll('[data-material-remove]').forEach(button => button.onclick = async () => {
+      if (!confirm('確定刪除這份尚未送審的附件？')) return;
+      setButtonBusy(button, true, '刪除中…');
+      try {
+        const result = await api('removeMaterialSubmissionFile', {
+          lessonId: lesson.id, contentId: button.dataset.materialRemove, fileId: button.dataset.fileId
+        }, state.token, { retry: false, timeout: MUTATION_TIMEOUT_MS });
+        state.activeSubmission = cacheStudentSubmission(lesson.id, result);
+        renderStudentSubmission();
+        showToast('附件已刪除');
+      } catch (error) { showToast(error.message || '刪除失敗'); if (button.isConnected) setButtonBusy(button, false); }
     });
   }
 

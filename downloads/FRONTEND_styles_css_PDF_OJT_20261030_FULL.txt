@@ -575,3 +575,31 @@
  .v1-material-submission .v1-sub-title{flex-wrap:wrap}
  .v1-material-submission button{width:100%}
 }
+
+
+/* Compact per-file OJT assignments: one card, one title, on-demand file picker */
+.v1-material-submission{grid-column:1/-1;min-width:0;margin:2px 0 0;padding:9px 0 0;border:0;border-top:1px solid var(--line);border-radius:0;background:transparent;display:block}
+.v1-material-bar{display:flex;align-items:center;flex-wrap:wrap;column-gap:9px;row-gap:7px;min-width:0}
+.v1-material-file-count{color:var(--muted);font-size:.74rem}
+.v1-material-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-left:auto}
+.v1-material-submission .v1-material-actions button{display:inline-flex;align-items:center;justify-content:center;width:auto;min-height:36px;max-width:100%;padding:7px 11px;white-space:nowrap;font-size:.78rem}
+.v1-material-primary-action{color:var(--brand-dark);background:var(--brand-soft);border-color:#e0b99f}
+.v1-material-send{color:white;background:var(--brand);border-color:var(--brand)}
+.v1-material-inspect{color:var(--muted);background:transparent}
+.v1-material-fallback-title{display:block;margin-bottom:8px;font-size:.88rem}
+.v1-material-detail{margin-top:9px;padding:8px;border-radius:9px;background:var(--soft)}
+.v1-material-file{display:flex;align-items:center;justify-content:space-between;gap:8px;overflow-wrap:anywhere;padding:6px 4px;font-size:.8rem}
+.v1-material-file+.v1-material-file{border-top:1px solid var(--line)}
+.v1-material-file span{min-width:0}
+.v1-material-file small{color:var(--muted)}
+.v1-material-detail .v1-reject-note{margin:0 0 7px}
+.v1-student-submission--compact{padding:8px 12px;border-radius:10px}
+.v1-material-progress-note{display:flex;justify-content:center;gap:5px;color:var(--muted);font-size:.8rem}
+.v1-material-progress-note strong{color:var(--ink)}
+@media(max-width:680px){
+ .v1-material-submission{padding-top:8px}
+ .v1-material-bar{gap:6px}
+ .v1-material-actions{margin-left:auto;gap:5px}
+ .v1-material-submission .v1-material-actions button{width:auto;min-height:36px;padding:7px 9px}
+ .content-block--file .download-card .primary-button{min-height:38px}
+}
